@@ -1,0 +1,8 @@
+// Carbon Design System v11 — global styles
+@use "@carbon/styles/scss/reset";
+@use "@carbon/styles/scss/type";
+@use "@carbon/styles/scss/themes";
+@use "@carbon/styles/scss/theme" with (
+  $theme: themes.$white
+);
+@use "@carbon/styles/scss/components/ui-shell";
