@@ -1,0 +1,3 @@
+-- Placeholder for any DB initialization beyond Alembic migrations.
+-- Alembic handles the full schema (Sub-Task 2).
+-- This file is mounted into postgres docker-entrypoint-initdb.d/.
