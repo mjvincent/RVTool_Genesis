@@ -167,9 +167,45 @@ The parser handles real-world freeform spreadsheets automatically:
 - **Title/banner rows** — if row 0 has fewer than 2 non-null headers, the parser falls back to row 1 as the header row
 - **Supported formats** — `.xlsx`, `.xls`, `.csv` up to 50 MB
 
+## AI Normalization: Resilience
+
+The normalizer is designed to **never leave a record permanently stuck**:
+
+- **120 s timeout** — each Ollama call is limited to 120 seconds (~10× the average phi4-mini response time). If Ollama hangs, the timeout fires.
+- **Automatic retry** — on timeout the call is retried once (with a 2 s pause to let Ollama clear its queue).
+- **Python fallback synthesizer** — if both attempts fail or return invalid JSON, the record is synthesized directly from raw spreadsheet data using IBM defaults. It completes as `complete` (not `error`) with low-confidence assumptions noting the fallback.
+- **Reset stuck endpoint** — `POST /api/projects/{id}/processing/reset-stuck` resets any records stuck in `processing` state back to `pending` (useful after container restarts mid-run).
+- **UI "Reset stuck & resume" button** — appears automatically after a record takes more than 90 seconds, allowing one-click recovery without needing the terminal.
+
+## RVTools Output: All 22 Sheets
+
+The generated `.xlsx` contains all standard RVTools 4.x sheets required by downstream tools (IBM Cool, VCF Migration Lite, etc.):
+
+| Sheet | Data |
+|-------|------|
+| `vInfo` | VM name, CPU, RAM, OS, datacenter, cluster |
+| `vCPU` | CPU configuration per VM |
+| `vMemory` | Memory configuration per VM |
+| `vDisk` | One row per disk per VM (capacity, mode, path, thin flag) |
+| `vPartition` | Partition-level disk usage |
+| `vNetwork` | NIC details, IP, adapter, MAC |
+| `vTools` | VMware Tools version/status |
+| `vHealth` | VM health status |
+| `vFileInfo` | VM config file path |
+| `vHost` | Physical host details |
+| `vFloppy`, `vCD`, `vSnapshot`, `vRP`, `vCluster`, `vHBA`, `vNIC`, `vSwitch`, `vPort`, `vSC+VM`, `vDatastore`, `vMultiWriter` | Header-only stubs (required for format validation) |
+
 ## Changelog
 
-### Recent fixes
+### feat/resilience-and-ux
+- **Full 22-sheet RVTools output** — adds all missing tabs (`vDisk`, `vCPU`, `vMemory`, `vTools`, `vHealth`, `vFileInfo`, and 12 stub sheets). Fixes "Unrecognised source format" error from VCF Migration Lite.
+- **Ollama timeout + retry** — per-record timeout reduced from 300 s to 120 s; one automatic retry; Python fallback synthesizer on failure. Records can no longer get permanently stuck.
+- **Reset-stuck endpoint** — `POST /api/projects/{id}/processing/reset-stuck` resets orphaned `processing` records.
+- **Per-record heartbeat UI** — Normalize page shows elapsed time on the current record with an animated pulse dot. After 90 s, a "Reset stuck & resume" button appears.
+- **NormalizePage Start button** — fixed: fresh projects (all-pending) no longer enter the "in-progress" display state immediately, hiding the Start button.
+- **Export filenames** — downloads now use the server-supplied `Content-Disposition` filename (e.g. `RVTools_ProjectName_20260709.xlsx`) instead of the bare UUID.
+
+### Previous fixes
 - **Parser phantom-row fix** — `ffill` was propagating last-row values into thousands of Excel phantom rows before `dropna` ran, inflating record counts (e.g. 88 servers showing as 413). Fixed by snapshotting a "real row" mask before `ffill` and filtering to it afterwards.
 - **File-replace doubling** — uploading a replacement file now clears all previous records/assumptions for the project before inserting the new batch.
 - **Upload count display** — the UI now correctly reads `row_count` from the upload response (was reading a non-existent field, always showing 0).

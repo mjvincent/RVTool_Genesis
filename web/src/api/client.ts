@@ -89,6 +89,8 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/processing-status`).then(r => r.json()),
     retryRecord: (projectId: string, recordId: string): Promise<{ processing_status: string; error_message: string | null }> =>
       fetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }).then(r => r.json()),
+    resetStuck: (projectId: string): Promise<{ reset_count: number; message: string }> =>
+      fetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }).then(r => r.json()),
   },
   exports: {
     generateRVTools: (projectId: string): Promise<ExportRecord> =>
