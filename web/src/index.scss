@@ -1,0 +1,462 @@
+/* Carbon Design System v11 — IBM Cloud g10 theme */
+@use "@carbon/styles/scss/reset";
+@use "@carbon/styles/scss/type";
+@use "@carbon/styles/scss/themes";
+@use "@carbon/styles/scss/theme" with (
+  $theme: themes.$g10
+);
+@use "@carbon/styles/scss/components/ui-shell";
+@use "@carbon/styles";
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+body { background: #f4f4f4; }
+
+.main-content {
+  padding-top: 3rem; /* exactly the Carbon header height */
+  min-height: 100vh;
+}
+
+/* ============================================================
+   Page header band — IBM Cloud style
+   ============================================================ */
+
+.page-header-band {
+  background: #e8e8e8;
+  border-bottom: 1px solid #d1d1d1;
+  padding: 2rem 0 1.5rem;
+  margin-bottom: 0;
+}
+
+.page-header-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.page-heading {
+  font-size: 1.75rem;
+  font-weight: 300;
+  color: #161616;
+  margin: 0 0 0.25rem;
+  letter-spacing: -0.01em;
+}
+
+.page-description {
+  font-size: 0.875rem;
+  color: #525252;
+  margin: 0;
+}
+
+/* Main content area */
+.page-body {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 2rem 4rem;
+}
+
+/* ============================================================
+   Step progress bar (horizontal, IBM Cloud style)
+   ============================================================ */
+
+.step-progress {
+  background: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 0;
+}
+
+.step-progress-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+}
+
+.step-progress-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 1rem 0;
+  border-bottom: 3px solid transparent;
+  gap: 0.625rem;
+  cursor: default;
+  font-size: 0.875rem;
+  color: #525252;
+  position: relative;
+  text-decoration: none;
+}
+
+.step-progress-item.sp-active {
+  border-bottom-color: #0f62fe;
+  color: #0f62fe;
+  font-weight: 600;
+}
+
+.step-progress-item.sp-complete {
+  border-bottom-color: #24a148;
+  color: #24a148;
+  cursor: pointer;
+}
+
+.step-progress-item.sp-locked {
+  color: #c6c6c6;
+}
+
+.step-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-progress-item.sp-complete .step-circle {
+  background: #24a148;
+  border-color: #24a148;
+  color: #ffffff;
+}
+
+.step-progress-item.sp-active .step-circle {
+  background: #0f62fe;
+  border-color: #0f62fe;
+  color: #ffffff;
+}
+
+/* ============================================================
+   Cards / tiles
+   ============================================================ */
+
+.ibm-card {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+/* ============================================================
+   Project list
+   ============================================================ */
+
+.project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1px;
+  background: #e0e0e0;
+  border: 1px solid #e0e0e0;
+}
+
+.project-item {
+  background: #ffffff;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.project-item:hover { background: #f4f4f4; }
+
+.project-item-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #161616;
+  margin: 0 0 0.2rem;
+}
+
+.project-item-meta {
+  font-size: 0.8125rem;
+  color: #6f6f6f;
+  margin: 0;
+}
+
+/* ============================================================
+   Empty state
+   ============================================================ */
+
+.empty-state {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  padding: 5rem 2rem;
+  text-align: center;
+}
+
+.empty-state h2 {
+  font-size: 1.25rem;
+  font-weight: 400;
+  margin: 1rem 0 0.5rem;
+  color: #161616;
+}
+
+.empty-state p {
+  font-size: 0.9375rem;
+  color: #6f6f6f;
+  max-width: 380px;
+  margin: 0 auto 1.5rem;
+  line-height: 1.6;
+}
+
+/* ============================================================
+   Upload drop zone
+   ============================================================ */
+
+.drop-zone {
+  border: 2px dashed #8d8d8d;
+  background: #f4f4f4;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone:hover, .drop-zone.dz-active {
+  border-color: #0f62fe;
+  background: #edf4ff;
+}
+
+.drop-zone h3 {
+  font-size: 1.0625rem;
+  font-weight: 400;
+  color: #161616;
+  margin: 1rem 0 0.375rem;
+}
+
+.drop-zone p {
+  font-size: 0.875rem;
+  color: #6f6f6f;
+  margin: 0;
+}
+
+/* File uploaded state */
+.file-uploaded {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: #defbe6;
+  border: 1px solid #a7f0ba;
+}
+
+/* ============================================================
+   Step actions
+   ============================================================ */
+
+.step-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding-top: 1.5rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+/* ============================================================
+   Record detail expanded row
+   ============================================================ */
+
+.record-detail {
+  padding: 1.25rem 1.5rem;
+  background: #f4f4f4;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.record-detail-field label {
+  display: block;
+  font-size: 0.75rem;
+  color: #6f6f6f;
+  margin-bottom: 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.record-detail-field span {
+  font-size: 0.9375rem;
+  color: #161616;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Assumptions panel (modal content)
+   ============================================================ */
+
+.confidence-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.25rem 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #525252;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.confidence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.confidence-dot.high   { background: #24a148; }
+.confidence-dot.medium { background: #f1c21b; }
+.confidence-dot.low    { background: #da1e28; }
+
+.assumption-item {
+  padding: 1rem 1.25rem;
+  margin-bottom: 0.75rem;
+  background: #f4f4f4;
+  border-left: 3px solid #e0e0e0;
+}
+.assumption-item.confidence-high   { border-left-color: #24a148; }
+.assumption-item.confidence-medium { border-left-color: #f1c21b; }
+.assumption-item.confidence-low    { border-left-color: #da1e28; }
+
+.assumption-field-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #161616;
+  margin-bottom: 0.375rem;
+}
+
+.assumption-values {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.875rem;
+  margin-bottom: 0.375rem;
+}
+
+.assumption-value-label {
+  color: #6f6f6f;
+  font-size: 0.75rem;
+  display: block;
+}
+
+.assumption-value-text {
+  color: #161616;
+  font-weight: 500;
+}
+
+.assumption-reasoning {
+  font-size: 0.8125rem;
+  color: #525252;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   Records table
+   ============================================================ */
+
+.vm-name-cell {
+  font-weight: 500;
+  color: #161616;
+}
+
+.assumption-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: #0f62fe;
+  font-weight: 500;
+}
+
+.assumption-badge:hover {
+  text-decoration: underline;
+}
+
+.assumption-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #0f62fe;
+}
+
+/* ============================================================
+   Normalize progress
+   ============================================================ */
+
+.norm-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  color: #525252;
+  margin-bottom: 0.5rem;
+}
+
+.norm-complete-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: #defbe6;
+  border: 1px solid #a7f0ba;
+  margin-top: 1rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: #198038;
+}
+
+/* ============================================================
+   Export cards
+   ============================================================ */
+
+.export-card-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .export-card-row { grid-template-columns: 1fr; }
+}
+
+.export-card {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.export-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #161616;
+}
+
+.export-card-desc {
+  font-size: 0.875rem;
+  color: #6f6f6f;
+  line-height: 1.5;
+  flex: 1;
+}
+
+/* ============================================================
+   Utility
+   ============================================================ */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}

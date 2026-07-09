@@ -1,0 +1,686 @@
+"""AI normalizer — calls Ollama (gemma4:e4b) to map raw server data to the RVTools schema.
+
+Strategy: Ask the LLM only for the fields it can meaningfully derive from customer data
+(vinfo, vnetwork, vpartition, server_type, and assumptions). The vHost record is
+synthesized entirely in Python from sensible IBM defaults — it is always a set of
+standard assumptions, so asking the LLM to invent 28 fields wastes context budget and
+causes truncation errors.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+import httpx
+
+from core.config import settings
+from services.network_inference import get_network_assumptions
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# vHost synthesis (pure Python — no LLM needed)
+# ---------------------------------------------------------------------------
+
+def _synthesize_vhost(vm_name: str, datacenter: str, cluster: str, memory_mb: int, cpus: int) -> tuple[dict, list[dict]]:
+    """Build a representative ESXi vHost record from IBM defaults.
+
+    Returns (vhost_dict, assumptions_list).
+    All fields are documented as low-confidence assumptions.
+    """
+    host_name = f"{vm_name}-host.customer.com"
+    host_memory_mb = max(int(memory_mb * 1.2), 1)  # 20% overhead, min 1 to avoid div/0
+    memory_usage_pct = round((memory_mb / host_memory_mb) * 100, 1) if host_memory_mb > 0 else 0.0
+    vcpus_per_core = round(cpus / 16, 1)
+
+    vhost = {
+        "host_name": host_name,
+        "datacenter": datacenter,
+        "cluster": cluster,
+        "config_status": "Normal",
+        "cpu_model": "Intel(R) Xeon(R) CPU E5-2680 0 @ 2.70GHz",
+        "speed_mhz": 2700,
+        "ht_available": "True",
+        "ht_active": "True",
+        "num_cpu": 2,
+        "cores_per_cpu": 8,
+        "num_cores": 16,
+        "cpu_usage_pct": 25.0,
+        "memory_mb": host_memory_mb,
+        "memory_usage_pct": memory_usage_pct,
+        "console": "False",
+        "num_nics": 4,
+        "num_hbas": 2,
+        "num_vms": 1,
+        "vms_per_core": round(1 / 16, 3),
+        "num_vcpus": cpus,
+        "vcpus_per_core": vcpus_per_core,
+        "vram_mb": memory_mb,
+        "vm_used_memory": 0,
+        "vm_memory_swapped": 0,
+        "vm_memory_ballooned": 0,
+        "esx_version": "VMware ESXi 7.0.0 build-default",
+        "vendor": "IBM",
+        "model": "IBM Power Systems",
+    }
+
+    assumptions = [
+        {"field_name": "vHost/host_name", "assumed_value": host_name, "original_value": None,
+         "reasoning": "Synthesized from VM name — no physical host data provided", "confidence": "low"},
+        {"field_name": "vHost/cpu_model", "assumed_value": "Intel(R) Xeon(R) CPU E5-2680 0 @ 2.70GHz", "original_value": None,
+         "reasoning": "IBM standard host CPU model default", "confidence": "low"},
+        {"field_name": "vHost/memory_mb", "assumed_value": str(host_memory_mb), "original_value": None,
+         "reasoning": f"VM memory ({memory_mb} MB) + 20% host overhead", "confidence": "low"},
+        {"field_name": "vHost/esx_version", "assumed_value": "VMware ESXi 7.0.0 build-default", "original_value": None,
+         "reasoning": "IBM standard ESX version default", "confidence": "low"},
+        {"field_name": "vHost/vendor+model", "assumed_value": "IBM / IBM Power Systems", "original_value": None,
+         "reasoning": "IBM infrastructure default", "confidence": "low"},
+    ]
+
+    return vhost, assumptions
+
+
+# ---------------------------------------------------------------------------
+# LLM Prompt — focused only on fields the LLM can derive
+# ---------------------------------------------------------------------------
+
+# Compact prompt — stripped to minimum tokens. Assumptions are generated in Python.
+# Each line kept short to reduce both prompt tokens and output tokens.
+_SYSTEM_PROMPT = (
+    "Convert this server row to IBM RVTools JSON. "
+    "Return ONLY valid JSON starting with { and ending with }. "
+    "No markdown, no text outside the JSON.\n\n"
+    "Required fields:\n"
+    '{"server_type":"vm|bare_metal",'
+    '"vinfo":{"vm_name":str,"powerstate":"poweredOn|poweredOff","template":"False",'
+    '"cpus":int,"memory_mb":int(MB),"nics":int,"disks":int,'
+    '"provisioned_mb":int(MB),"in_use_mb":int(MB,default provisioned*0.6),'
+    '"datacenter":str(default Datacenter1),"cluster":str(default Cluster1),'
+    '"host":str(vm_name+\"-host.customer.com\"),'
+    '"os_config":str(full OS name e.g. Red Hat Enterprise Linux 8 (64-bit)),'
+    '"os_vmware_tools":"toolsOk|toolsNotInstalled"},'
+    '"vnetwork":[{"vm_name":str,"powerstate":"poweredOn","template":"False",'
+    '"srm_placeholder":"False","nic_label":"Network adapter 1",'
+    '"adapter":"Vmxnet3|E1000e","network":"VM Network","switch":"vSwitch0",'
+    '"connected":"True","starts_connected":"True","mac_address":"00:50:56:00:00:01",'
+    '"type":"VirtualVmxnet3|VirtualE1000e","ipv4_address":str(or 10.0.1.2),'
+    '"ipv6_address":"","direct_path_io":"False","internal_sort_column":0,"annotation":""}],'
+    '"vpartition":[{"vm_name":str,"powerstate":"poweredOn","template":"False",'
+    '"disk_label":"C:\\\\|/","capacity_mb":int,"consumed_mb":int(default cap*0.6),'
+    '"free_mb":int(cap-consumed),"free_pct":float(free/cap*100),'
+    '"datacenter":str,"cluster":str,"host":str,"os_config":str,"os_vmware_tools":str}],'
+    '"assumptions":[]}'
+    "\n\nRules: memory/disk in MB ints. GB*1024=MB. "
+    "Multiple disks=multiple vpartition entries. "
+    "Windows disk_label=C:\\\\ Linux=/\n\n"
+)
+
+
+# Known column mappings for spreadsheets with Unnamed columns
+# (detected from the Cognizant OmniCare RFP spreadsheet structure)
+_UNNAMED_COL_MAP = {
+    "Unnamed: 0":  "server_name",
+    "Unnamed: 1":  "notes",
+    "Unnamed: 2":  "environment",
+    "Unnamed: 3":  "os",
+    "Unnamed: 4":  "application",
+    "Unnamed: 5":  "vcpus",
+    "Unnamed: 6":  "cpu_speed_or_ram_gb",
+    "Unnamed: 7":  "disk_gb",
+    "Unnamed: 8":  "ram_mb_or_disk_mb",
+    "Unnamed: 9":  "pool_or_cluster_name",
+    "Unnamed: 10": "ha_enabled",
+    "Unnamed: 11": "extra_1",
+    "Unnamed: 12": "storage_notes",
+    "Unnamed: 13": "added_notes",
+    "Unnamed: 14": "utilization_ratio",
+    "Grouped cells are paired clusters": "cluster_type",
+}
+
+
+def _rename_unnamed_columns(raw_data: dict) -> dict:
+    """Rename 'Unnamed: N' keys to meaningful names so the LLM understands them."""
+    unnamed_count = sum(1 for k in raw_data if str(k).startswith("Unnamed:"))
+    if unnamed_count == 0:
+        return raw_data
+    return {_UNNAMED_COL_MAP.get(k, k): v for k, v in raw_data.items()}
+
+
+def _build_prompt(raw_data: dict) -> str:
+    # Rename unnamed columns, strip nulls/blanks, truncate long string values
+    renamed = _rename_unnamed_columns(raw_data)
+    trimmed = {}
+    for k, v in renamed.items():
+        if v is None:
+            continue
+        sv = str(v).strip()
+        if sv in ("", "nan", "NaN", "None"):
+            continue
+        # Truncate any value longer than 80 chars to avoid bloating the prompt
+        if len(sv) > 80:
+            sv = sv[:77] + "..."
+            v = sv
+        trimmed[k] = v
+    return (
+        _SYSTEM_PROMPT
+        + f"Server row: {json.dumps(trimmed, default=str)}\n\nJSON:"
+    )
+
+
+def _strip_markdown_fences(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
+    return text.strip()
+
+
+def _sanitize_llm_text(text: str) -> str:
+    """Fix common LLM output quirks before JSON parsing.
+
+    - Replace Python booleans (True/False/None) with JSON equivalents
+    - Evaluate simple inline arithmetic expressions like  8192 * 1024
+      and replace them with the integer result (handles // comments too)
+    - Strip C-style // line comments inside JSON strings
+    """
+    # Python bool/null → JSON
+    text = re.sub(r'\bTrue\b',  'true',  text)
+    text = re.sub(r'\bFalse\b', 'false', text)
+    text = re.sub(r'\bNone\b',  'null',  text)
+
+    # Evaluate arithmetic expressions like:
+    #   8192 * 1024, // GB to MB
+    #   0.6 * 7737
+    #   (225653555) / (564133888) * 100
+    def _eval_arith(m: re.Match) -> str:
+        expr = m.group(0).strip()
+        # Strip trailing // comment
+        expr = re.sub(r'//[^\n]*$', '', expr).strip().rstrip(',')
+        # Allow only digits, whitespace, basic operators, parens, dots
+        if re.fullmatch(r'[\d\s\+\-\*\/\.\(\)]+', expr):
+            try:
+                result = float(eval(expr))  # nosec — safe pattern
+                # Return int if it's a whole number, else 1-decimal float
+                return str(int(result)) if result == int(result) else str(round(result, 1))
+            except Exception:
+                pass
+        return m.group(0)
+
+    # Match arithmetic expressions including parenthesized forms, with optional // comment
+    text = re.sub(
+        r'[\d\s\(\)]*(?:[\d.]+|\([\d.]+\))\s*(?:[+\-*/]\s*(?:[\d.]+|\([\d.]+\))\s*)+(?://[^\n",}\]]*)?',
+        _eval_arith,
+        text,
+    )
+
+    # Strip remaining // line comments
+    text = re.sub(r'//[^\n"]*', '', text)
+
+    return text
+
+
+def _extract_json(text: str) -> str:
+    """Extract the first complete JSON object from the response text.
+
+    Local LLMs sometimes emit a short preamble before the JSON object,
+    or truncate mid-object (no closing brace). Both cases are handled.
+    """
+    text = _strip_markdown_fences(text)
+    text = _sanitize_llm_text(text)
+    start = text.find("{")
+    if start == -1:
+        return text
+    end = text.rfind("}")
+    if end == -1 or end < start:
+        # Truncated — return from first { to the end so _repair_truncated_json can fix it
+        return text[start:]
+    return text[start : end + 1]
+
+
+# ---------------------------------------------------------------------------
+# OS name normalization
+# ---------------------------------------------------------------------------
+
+# Maps common shorthand → IBM-standard full OS name (used by VMware/IBM Cool)
+_OS_NORMALIZATION: list[tuple[str, str]] = [
+    # Red Hat Enterprise Linux
+    (r"rhel\s*9",                         "Red Hat Enterprise Linux 9 (64-bit)"),
+    (r"rhel\s*8",                         "Red Hat Enterprise Linux 8 (64-bit)"),
+    (r"rhel\s*7",                         "Red Hat Enterprise Linux 7 (64-bit)"),
+    (r"rhel\s*6",                         "Red Hat Enterprise Linux 6 (64-bit)"),
+    (r"red\s*hat.*9",                     "Red Hat Enterprise Linux 9 (64-bit)"),
+    (r"red\s*hat.*8",                     "Red Hat Enterprise Linux 8 (64-bit)"),
+    (r"red\s*hat.*7",                     "Red Hat Enterprise Linux 7 (64-bit)"),
+    (r"red\s*hat.*6",                     "Red Hat Enterprise Linux 6 (64-bit)"),
+    (r"red\s*hat",                        "Red Hat Enterprise Linux 8 (64-bit)"),
+    # SUSE / SLES
+    (r"sles\s*15",                        "SUSE Linux Enterprise 15 (64-bit)"),
+    (r"sles\s*12",                        "SUSE Linux Enterprise 12 (64-bit)"),
+    (r"suse.*15",                         "SUSE Linux Enterprise 15 (64-bit)"),
+    (r"suse.*12",                         "SUSE Linux Enterprise 12 (64-bit)"),
+    (r"suse",                             "SUSE Linux Enterprise 15 (64-bit)"),
+    # Ubuntu
+    (r"ubuntu\s*2[23]",                   "Ubuntu Linux (64-bit)"),
+    (r"ubuntu\s*20",                      "Ubuntu Linux (64-bit)"),
+    (r"ubuntu\s*18",                      "Ubuntu Linux (64-bit)"),
+    (r"ubuntu",                           "Ubuntu Linux (64-bit)"),
+    # Debian
+    (r"debian",                           "Debian GNU/Linux (64-bit)"),
+    # CentOS
+    (r"centos\s*[89]",                    "CentOS Linux (64-bit)"),
+    (r"centos\s*7",                       "CentOS 4/5/6/7 (64-bit)"),
+    (r"centos",                           "CentOS Linux (64-bit)"),
+    # Oracle Linux
+    (r"oracle.*linux.*[89]",              "Oracle Linux 8 and later (64-bit)"),
+    (r"oracle.*linux.*7",                 "Oracle Linux 7 (64-bit)"),
+    (r"oracle.*linux",                    "Oracle Linux 8 and later (64-bit)"),
+    # Windows Server
+    (r"windows.*server.*2022",            "Microsoft Windows Server 2022 (64-bit)"),
+    (r"windows.*server.*2019",            "Microsoft Windows Server 2019 (64-bit)"),
+    (r"windows.*server.*2016",            "Microsoft Windows Server 2016 (64-bit)"),
+    (r"windows.*server.*2012.*r2",        "Microsoft Windows Server 2012 R2 (64-bit)"),
+    (r"windows.*server.*2012",            "Microsoft Windows Server 2012 (64-bit)"),
+    (r"windows.*server.*2008.*r2",        "Microsoft Windows Server 2008 R2 (64-bit)"),
+    (r"windows.*server.*2008",            "Microsoft Windows Server 2008 (64-bit)"),
+    (r"win.*2022",                        "Microsoft Windows Server 2022 (64-bit)"),
+    (r"win.*2019",                        "Microsoft Windows Server 2019 (64-bit)"),
+    (r"win.*2016",                        "Microsoft Windows Server 2016 (64-bit)"),
+    (r"win.*2012\s*r2",                   "Microsoft Windows Server 2012 R2 (64-bit)"),
+    (r"win.*2012",                        "Microsoft Windows Server 2012 (64-bit)"),
+    (r"win.*2008\s*r2",                   "Microsoft Windows Server 2008 R2 (64-bit)"),
+    (r"win.*2008",                        "Microsoft Windows Server 2008 (64-bit)"),
+    # AIX
+    (r"aix\s*7",                          "IBM AIX 7.x"),
+    (r"aix\s*6",                          "IBM AIX 6.x"),
+    (r"aix",                              "IBM AIX 7.x"),
+]
+
+# Pre-compile the patterns once at import time
+_OS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(pattern, re.IGNORECASE), replacement)
+    for pattern, replacement in _OS_NORMALIZATION
+]
+
+
+def _normalize_os_name(raw_os: str | None) -> tuple[str, bool]:
+    """Return (normalized_os_name, was_changed).
+
+    Matches the raw OS string against known patterns and returns the
+    IBM-standard equivalent. Returns the input unchanged if no match.
+    """
+    if not raw_os:
+        return raw_os or "", False
+    for pattern, replacement in _OS_PATTERNS:
+        if pattern.search(raw_os):
+            if replacement.lower() != raw_os.lower():
+                return replacement, True
+            return replacement, False
+    # Already has "(64-bit)" — likely already normalized
+    if "(64-bit)" in raw_os:
+        return raw_os, False
+    return raw_os, False
+
+
+# ---------------------------------------------------------------------------
+# Sanity-check / post-processing
+# ---------------------------------------------------------------------------
+
+# 32 TB in MB — any disk or RAM value above this is clearly an LLM unit error
+_MAX_DISK_MB = 32 * 1024 * 1024   # 32 TB
+_MAX_RAM_MB  = 4 * 1024 * 1024    # 4 TB (generous upper bound for a single VM)
+# Reasonable vCPU ceiling for a single VM
+_MAX_CPUS    = 256
+
+
+def _clamp_mb(value: object, label: str, assumptions_out: list[dict], max_mb: int) -> int:
+    """Return a clamped MB integer and append an assumption if the value was adjusted."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if v > max_mb:
+        corrected = max_mb
+        assumptions_out.append({
+            "field_name": label,
+            "assumed_value": str(corrected),
+            "original_value": str(v),
+            "reasoning": (
+                f"LLM returned {v} MB which exceeds the sanity ceiling of {max_mb} MB "
+                f"({max_mb // 1024} GB). Likely a unit-multiplication error (e.g. GB × 1024 × 10). "
+                "Value capped at ceiling."
+            ),
+            "confidence": "medium",
+        })
+        logger.warning("Clamped %s from %d MB to %d MB (sanity ceiling)", label, v, corrected)
+        return corrected
+    return max(v, 0)
+
+
+def _sanitize_numeric_fields(result: dict) -> dict:
+    """Walk the normalized result and fix impossible numeric values from the LLM.
+
+    Mutates result in-place and returns it.
+    Appends corrective assumptions for every value changed.
+    """
+    new_assumptions: list[dict] = []
+
+    # --- vinfo ---
+    vinfo = result.get("vinfo") or {}
+    if vinfo:
+        vinfo["memory_mb"]       = _clamp_mb(vinfo.get("memory_mb", 0),       "vinfo/memory_mb",       new_assumptions, _MAX_RAM_MB)
+        vinfo["provisioned_mb"]  = _clamp_mb(vinfo.get("provisioned_mb", 0),  "vinfo/provisioned_mb",  new_assumptions, _MAX_DISK_MB)
+        vinfo["in_use_mb"]       = _clamp_mb(vinfo.get("in_use_mb", 0),       "vinfo/in_use_mb",       new_assumptions, _MAX_DISK_MB)
+        try:
+            cpus = int(vinfo.get("cpus", 1))
+            if cpus > _MAX_CPUS:
+                new_assumptions.append({
+                    "field_name": "vinfo/cpus",
+                    "assumed_value": str(_MAX_CPUS),
+                    "original_value": str(cpus),
+                    "reasoning": f"CPU count {cpus} exceeds sanity ceiling {_MAX_CPUS}. Capped.",
+                    "confidence": "medium",
+                })
+                cpus = _MAX_CPUS
+            vinfo["cpus"] = max(cpus, 1)
+        except (TypeError, ValueError):
+            vinfo["cpus"] = 1
+
+        # in_use_mb must be <= provisioned_mb
+        if vinfo["in_use_mb"] > vinfo["provisioned_mb"] and vinfo["provisioned_mb"] > 0:
+            vinfo["in_use_mb"] = vinfo["provisioned_mb"]
+
+        # Normalize OS names to IBM-standard strings
+        raw_os = vinfo.get("os_config") or ""
+        normalized_os, os_changed = _normalize_os_name(raw_os)
+        if os_changed:
+            vinfo["os_config"] = normalized_os
+            new_assumptions.append({
+                "field_name": "vinfo/os_config",
+                "assumed_value": normalized_os,
+                "original_value": raw_os,
+                "reasoning": (
+                    f"OS name '{raw_os}' normalized to IBM/VMware-standard string "
+                    f"'{normalized_os}' for RVTools compatibility."
+                ),
+                "confidence": "high",
+            })
+        # Mirror normalization to os_vmware_tools if it was also set to a raw string
+        raw_tools_os = vinfo.get("os_vmware_tools") or ""
+        norm_tools_os, tools_changed = _normalize_os_name(raw_tools_os)
+        if tools_changed:
+            vinfo["os_vmware_tools"] = norm_tools_os
+
+    # --- vpartition ---
+    for part in result.get("vpartition") or []:
+        if not part:
+            continue
+        cap  = _clamp_mb(part.get("capacity_mb", 0),  "vpartition/capacity_mb",  new_assumptions, _MAX_DISK_MB)
+        cons = _clamp_mb(part.get("consumed_mb", 0),  "vpartition/consumed_mb",  new_assumptions, _MAX_DISK_MB)
+        part["capacity_mb"] = cap
+        part["consumed_mb"] = min(cons, cap) if cap > 0 else cons
+        part["free_mb"]     = max(cap - part["consumed_mb"], 0)
+        part["free_pct"]    = round(part["free_mb"] / cap * 100, 1) if cap > 0 else 0.0
+
+    # --- vnetwork — inject gateway/DNS/security-group assumptions for placeholder IPs ---
+    vm_name = (result.get("vinfo") or {}).get("vm_name", "unknown")
+    for idx, nic in enumerate(result.get("vnetwork") or []):
+        if not nic:
+            continue
+        ipv4 = nic.get("ipv4_address") or ""
+        is_placeholder = (
+            not ipv4
+            or ipv4.startswith("10.0.0.x")
+            or ipv4.endswith(".x")
+            or ipv4 in ("", "0.0.0.0", "N/A", "n/a")
+        )
+        if is_placeholder:
+            net_assumptions = get_network_assumptions(vm_name, idx, provided_ip=None if is_placeholder else ipv4)
+            new_assumptions.extend(net_assumptions)
+
+    result["assumptions"] = list(result.get("assumptions") or []) + new_assumptions
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Python fallback synthesizer — used when Ollama returns unparseable output
+# ---------------------------------------------------------------------------
+
+def _synthesize_from_raw(raw_data: dict) -> dict:
+    """Build a minimal but valid normalized record purely from raw_data.
+
+    Called when every Ollama attempt fails. Values are best-effort from the
+    raw data; everything inferred is marked as a low-confidence assumption.
+    """
+    from services.network_inference import infer_server_type
+
+    renamed = _rename_unnamed_columns(raw_data)
+
+    def _pick(*keys):
+        for k in keys:
+            v = renamed.get(k)
+            if v is not None and str(v).strip() not in ("", "nan", "NaN", "None"):
+                return v
+        return None
+
+    vm_name    = str(_pick("server_name", "name", "vm_name", "hostname") or "unknown")
+
+    # Guard: if vm_name looks like a header row, mark it clearly and use safe defaults
+    _HEADER_SENTINELS = {"devicename", "device name", "server name", "vm name", "hostname", "name"}
+    if vm_name.lower().strip() in _HEADER_SENTINELS:
+        vm_name = f"HEADER_ROW_{vm_name}"
+
+    os_raw     = str(_pick("os", "operating_system", "os_type") or "Unknown OS")
+
+    def _safe_int(val, default):
+        """Convert val to int, returning default if it's not numeric."""
+        try:
+            return int(float(val))
+        except (TypeError, ValueError):
+            return default
+
+    vcpus      = _safe_int(_pick("vcpus", "cpu_count", "cpus"), 2)
+    # ram_mb_or_disk_mb col 8 is RAM in MB for most rows in this dataset
+    ram_raw    = _pick("ram_mb_or_disk_mb", "memory_mb", "ram_mb", "ram_gb")
+    mem_mb     = _safe_int(ram_raw, 4096)
+    disk_raw   = _pick("disk_gb", "disk_mb", "storage_gb")
+    disk_mb    = _safe_int(float(disk_raw) * 1024 if disk_raw else None, 51200)
+    server_type = infer_server_type(raw_data)
+
+    os_config, _ = _normalize_os_name(os_raw)
+    os_tools  = "toolsOk" if server_type == "vm" else "toolsNotInstalled"
+    host      = f"{vm_name}-host.customer.com"
+    dc        = str(_pick("datacenter", "cluster_type") or "Datacenter1")
+    cluster   = str(_pick("pool_or_cluster_name", "cluster") or "Cluster1")
+
+    vinfo = {
+        "vm_name": vm_name, "powerstate": "poweredOn", "template": "False",
+        "cpus": vcpus, "memory_mb": mem_mb, "nics": 1, "disks": 1,
+        "provisioned_mb": disk_mb, "in_use_mb": int(disk_mb * 0.6),
+        "datacenter": dc, "cluster": cluster, "host": host,
+        "os_config": os_config, "os_vmware_tools": os_tools,
+    }
+    vnetwork = [{
+        "vm_name": vm_name, "powerstate": "poweredOn", "template": "False",
+        "srm_placeholder": "False", "nic_label": "Network adapter 1",
+        "adapter": "Vmxnet3" if server_type == "vm" else "E1000e",
+        "network": "VM Network", "switch": "vSwitch0",
+        "connected": "True", "starts_connected": "True",
+        "mac_address": "00:50:56:00:00:01",
+        "type": "VirtualVmxnet3" if server_type == "vm" else "VirtualE1000e",
+        "ipv4_address": "10.0.1.2", "ipv6_address": "",
+        "direct_path_io": "False", "internal_sort_column": 0, "annotation": "",
+    }]
+    vpartition = [{
+        "vm_name": vm_name, "powerstate": "poweredOn", "template": "False",
+        "disk_label": "C:\\" if "windows" in os_raw.lower() else "/",
+        "capacity_mb": disk_mb, "consumed_mb": int(disk_mb * 0.6),
+        "free_mb": int(disk_mb * 0.4), "free_pct": 40.0,
+        "datacenter": dc, "cluster": cluster, "host": host,
+        "os_config": os_config, "os_vmware_tools": os_tools,
+    }]
+    assumptions = [{
+        "field_name": "all_fields",
+        "assumed_value": "synthesized from raw data",
+        "original_value": None,
+        "reasoning": "Ollama normalization failed for this record — all values synthesized directly from raw spreadsheet data using Python defaults.",
+        "confidence": "low",
+    }]
+    return {
+        "server_type": server_type,
+        "vinfo": vinfo,
+        "vnetwork": vnetwork,
+        "vpartition": vpartition,
+        "assumptions": assumptions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# JSON repair
+# ---------------------------------------------------------------------------
+
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to close a truncated JSON object by balancing brackets.
+
+    When the LLM hits the token limit mid-object, the JSON ends abruptly.
+    Strategy:
+      1. Strip any trailing incomplete key-value (dangling key with no value)
+      2. Close any open arrays with []
+      3. Close any open objects with {}
+      4. Ensure required top-level keys exist with empty defaults
+    """
+    import re as _re
+
+    # Remove trailing garbage: dangling open string, incomplete key, or bare comma
+    # e.g. ends with:  "  |  "key":  |  "key": val,  |  ,
+    text = text.rstrip()
+    # Strip dangling unclosed string at the very end (e.g. the text ends with just  "  )
+    text = _re.sub(r',?\s*"[^"]*$', '', text)
+    # Strip incomplete key-value  "key":  (key present but no value)
+    text = _re.sub(r',?\s*"[^"]+"\s*:\s*$', '', text.rstrip())
+    # Strip trailing comma
+    text = text.rstrip().rstrip(',')
+
+    # Count unmatched open braces/brackets
+    depth_brace  = text.count('{') - text.count('}')
+    depth_bracket = text.count('[') - text.count(']')
+
+    # Close open arrays first, then objects
+    text = text.rstrip().rstrip(',')
+    text += ']' * max(0, depth_bracket)
+    text += '}' * max(0, depth_brace)
+
+    # Ensure top-level required keys exist
+    try:
+        partial = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+    for key, default in [("server_type", "vm"), ("vinfo", {}), ("vnetwork", []), ("vpartition", []), ("assumptions", [])]:
+        if key not in partial:
+            partial[key] = default
+    # Ensure vinfo has vm_name
+    if isinstance(partial.get("vinfo"), dict) and not partial["vinfo"].get("vm_name"):
+        partial["vinfo"]["vm_name"] = "unknown"
+
+    return json.dumps(partial)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def normalize_record(raw_data: dict) -> dict:
+    """Call Ollama (gemma4:e4b) to normalize a single raw server record.
+
+    Reaches the host-machine Ollama service via host.docker.internal — no
+    additional container or API key is required.
+
+    vHost is synthesized in Python (not by the LLM) to stay within context limits.
+
+    Returns a dict with keys:
+        server_type, vinfo, vnetwork, vpartition, vhost, assumptions
+    Raises ValueError if Ollama is unreachable or returns invalid JSON.
+    """
+    prompt = _build_prompt(raw_data)
+
+    payload = {
+        "model": settings.ollama_model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0,
+            "num_predict": 3000,
+        },
+    }
+
+    try:
+        with httpx.Client(timeout=300.0) as client:
+            response = client.post(
+                f"{settings.ollama_base_url}/api/generate",
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise ValueError(
+            f"Cannot reach Ollama at {settings.ollama_base_url}. "
+            "Make sure the Ollama app is running on your Mac (look for the llama icon "
+            "in the menu bar), then try again."
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise ValueError(
+            f"Ollama returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
+        ) from exc
+
+    raw_text: str = response.json().get("response", "")
+    if not raw_text:
+        raise ValueError(
+            "Ollama returned an empty response. The model may still be loading — "
+            "wait a moment and retry."
+        )
+
+    cleaned = _extract_json(raw_text)
+
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        # Try to repair truncated JSON by closing open structures
+        repaired = _repair_truncated_json(cleaned)
+        try:
+            result = json.loads(repaired)
+            logger.warning("Repaired truncated JSON for response (was %d chars)", len(cleaned))
+        except json.JSONDecodeError:
+            # Last resort: synthesize the record from raw data in Python
+            logger.warning(
+                "Ollama JSON unrecoverable — falling back to Python synthesizer for this record. "
+                "Preview: %s", raw_text[:200]
+            )
+            return _synthesize_from_raw(raw_data)
+
+    # Fill any missing top-level keys with defaults rather than hard-failing
+    for key, default in [("server_type", "vm"), ("vnetwork", []), ("vpartition", []), ("assumptions", [])]:
+        if key not in result:
+            result[key] = default
+    if "vinfo" not in result:
+        # vinfo is the only key we truly can't default — fall back to Python synthesizer
+        logger.warning("LLM response missing vinfo entirely — using Python synthesizer")
+        return _synthesize_from_raw(raw_data)
+
+    # Post-processing sanity checks on numeric fields
+    result = _sanitize_numeric_fields(result)
+
+    # Synthesize vHost in Python — deterministic, no LLM context budget needed
+    vinfo = result.get("vinfo", {})
+    vhost, vhost_assumptions = _synthesize_vhost(
+        vm_name=vinfo.get("vm_name", "unknown"),
+        datacenter=vinfo.get("datacenter", "Datacenter1"),
+        cluster=vinfo.get("cluster", "Cluster1"),
+        memory_mb=int(vinfo.get("memory_mb", 4096)),
+        cpus=int(vinfo.get("cpus", 2)),
+    )
+
+    result["vhost"] = vhost
+    result["assumptions"] = result.get("assumptions", []) + vhost_assumptions
+
+    return result
