@@ -65,7 +65,7 @@ fi
 success "Ollama is running at http://localhost:11434"
 
 # Read the configured model from .env.example as the canonical source
-OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e4b}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-phi4-mini}"
 
 # Check if the model is already available
 if ! ollama list 2>/dev/null | grep -q "^${OLLAMA_MODEL}"; then
