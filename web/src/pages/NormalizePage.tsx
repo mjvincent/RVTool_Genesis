@@ -39,9 +39,11 @@ export default function NormalizePage() {
         }
         if (statusResp.status === 'fulfilled') {
           setStatus(statusResp.value);
-          // If processing was already running (e.g. page refresh mid-run), restart poll
+          // Resume poll only if work has actually started (complete > 0 or a record
+          // is mid-flight). Do NOT set processing=true for a fresh project where
+          // everything is still pending — that hides the "Start" button.
           const s = statusResp.value;
-          if (s.total > 0 && !s.is_complete) {
+          if (!s.is_complete && (s.complete > 0 || s.processing > 0)) {
             setProcessing(true);
           }
         }
@@ -163,7 +165,7 @@ export default function NormalizePage() {
                 <ProgressBar value={100} max={100} label="" helperText="" />
               </div>
             </>
-          ) : processing || (status && status.total > 0 && !status.is_complete) ? (
+          ) : processing || (status && (status.complete > 0 || status.processing > 0) && !status.is_complete) ? (
             <>
               <div className="norm-progress-label">
                 <span>{status?.complete ?? 0} of {status?.total ?? recordCount} records normalized</span>
