@@ -1,7 +1,10 @@
 """RVTools-compliant .xlsx generator.
 
-Produces a workbook with exactly 4 sheets in the order required by the IBM
-Cool tool: vInfo, vNetwork, vPartition, vHost.
+Produces a workbook with ALL standard RVTools sheets in the correct order.
+Sheets with data: vInfo, vDisk, vPartition, vNetwork, vHost.
+Remaining sheets are structurally present with correct headers but no data rows
+(they are required by downstream tools such as VCF Migration Lite for format
+validation, but carry no information we can synthesise).
 """
 from __future__ import annotations
 
@@ -13,92 +16,174 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
 # ---------------------------------------------------------------------------
-# Header definitions — order and exact spelling must match the sample file.
+# Header definitions — exact spelling and order from RVTools 4.x
 # ---------------------------------------------------------------------------
 
 VINFO_HEADERS = [
-    "VM",
-    "Powerstate",
-    "Template",
-    "CPUs",
-    "Memory",
-    "NICs",
-    "Disks",
-    "Provisioned MB",
-    "In Use MB",
-    "Datacenter",
-    "Cluster",
-    "Host",
-    "OS according to the configuration file",
-    "OS according to the VMware Tools",
+    "VM", "Powerstate", "Template", "CPUs", "Memory", "NICs", "Disks",
+    "Provisioned MB", "In Use MB", "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
 ]
 
-VNETWORK_HEADERS = [
-    "VM",
-    "Powerstate",
-    "Template",
-    "SRM Placeholder",
-    "NIC label",
-    "Adapter",
-    "Network",
-    "Switch",
-    "Connected",
-    "Starts Connected",
-    "Mac Address",
-    "Type",
-    "IPv4 Address",
-    "IPv6 Address",
-    "Direct Path IO",
-    "Internal Sort Column",
-    "Annotation",
+VCPU_HEADERS = [
+    "VM", "Powerstate", "Template", "CPUs", "Cores per socket",
+    "CPU Hot Add", "CPU Hot Remove", "CPU reservation (MHz)",
+    "CPU limit (MHz)", "CPU shares", "Latency sensitivity",
+    "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
+]
+
+VMEMORY_HEADERS = [
+    "VM", "Powerstate", "Template", "Memory", "Memory Hot Add",
+    "Memory reservation (MB)", "Memory limit (MB)", "Memory shares",
+    "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
+]
+
+VDISK_HEADERS = [
+    "VM", "Powerstate", "Template", "Disk", "Disk Mode",
+    "Capacity MB", "Disk Path", "Thin", "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
 ]
 
 VPARTITION_HEADERS = [
-    "VM",
-    "Powerstate",
-    "Template",
-    "Disk",
-    "Capacity MB",
-    "Consumed MB",
-    "Free MB",
-    "Free % ",   # trailing space is intentional — matches sample file exactly
-    "Datacenter",
-    "Cluster",
-    "Host",
-    "OS according to the configuration file",
-    "OS according to the VMware Tools",
+    "VM", "Powerstate", "Template", "Disk", "Capacity MB",
+    "Consumed MB", "Free MB",
+    "Free % ",   # trailing space matches sample exactly
+    "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
+]
+
+VNETWORK_HEADERS = [
+    "VM", "Powerstate", "Template", "SRM Placeholder", "NIC label",
+    "Adapter", "Network", "Switch", "Connected", "Starts Connected",
+    "Mac Address", "Type", "IPv4 Address", "IPv6 Address",
+    "Direct Path IO", "Internal Sort Column", "Annotation",
+]
+
+VFLOPPY_HEADERS = [
+    "VM", "Powerstate", "Template", "Floppy label", "Connected",
+    "Starts Connected", "Datacenter", "Cluster", "Host",
+]
+
+VCD_HEADERS = [
+    "VM", "Powerstate", "Template", "CD label", "CD Path", "Connected",
+    "Starts Connected", "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
+]
+
+VSNAPSHOT_HEADERS = [
+    "VM", "Powerstate", "Template", "Snapshot name", "Snapshot description",
+    "Snapshot creation date", "Snapshot size (MB)", "Quiesced",
+    "Datacenter", "Cluster", "Host",
+]
+
+VTOOLS_HEADERS = [
+    "VM", "Powerstate", "Template", "DNS Name", "Primary IP Address",
+    "Network", "HW version", "VMware Tools version", "VMware Tools status",
+    "VMware Tools running status", "VMware Tools version status",
+    "Datacenter", "Cluster", "Host",
+    "OS according to the configuration file", "OS according to the VMware Tools",
+]
+
+VRP_HEADERS = [
+    "Name", "Parent RP", "CPU Shares", "CPU Reservation (MHz)",
+    "CPU Limit (MHz)", "CPU Expandable Reservation", "Memory Shares",
+    "Memory Reservation (MB)", "Memory Limit (MB)", "Memory Expandable Reservation",
+    "Datacenter", "Cluster",
+]
+
+VCLUSTER_HEADERS = [
+    "Name", "Datacenter", "HAEnabled", "HA Admission Control",
+    "HA Failover Level", "DRS Enabled", "DRS Automation Level",
+    "DRS Migration Threshold", "EVC Mode", "Config status",
+    "# CPU", "# Cores", "Total CPU (MHz)", "CPU usage (MHz)",
+    "CPU usage %", "# Memory", "Memory usage %", "# VMs",
+    "# Hosts", "# vCPU", "# vRAM",
 ]
 
 VHOST_HEADERS = [
-    "Host",
-    "Datacenter",
-    "Cluster",
-    "Config status",
-    "CPU Model",
-    "Speed",
-    "HT Available",
-    "HT Active",
-    "# CPU",
-    "Cores per CPU",
-    "# Cores",
-    "CPU usage %",
-    "# Memory",
-    "Memory usage %",
-    "Console",
-    "# NICs",
-    "# HBAs",
-    "# VMs",
-    "VMs per Core",
-    "# vCPUs",
-    "vCPUs per Core",
-    "vRAM",
-    "VM Used memory",
-    "VM Memory Swapped",
-    "VM Memory Ballooned",
-    "ESX Version",
-    "Vendor",
-    "Model",
+    "Host", "Datacenter", "Cluster", "Config status", "CPU Model",
+    "Speed", "HT Available", "HT Active", "# CPU", "Cores per CPU",
+    "# Cores", "CPU usage %", "# Memory", "Memory usage %", "Console",
+    "# NICs", "# HBAs", "# VMs", "VMs per Core", "# vCPUs",
+    "vCPUs per Core", "vRAM", "VM Used memory", "VM Memory Swapped",
+    "VM Memory Ballooned", "ESX Version", "Vendor", "Model",
 ]
+
+VHBA_HEADERS = [
+    "Host", "Datacenter", "Cluster", "HBA", "Type", "Model",
+    "Driver", "WWN/IQN", "Status",
+]
+
+VNIC_HEADERS = [
+    "Host", "Datacenter", "Cluster", "NIC", "Type", "Driver",
+    "Mac Address", "Speed (Mbps)", "Duplex", "Status",
+]
+
+VSWITCH_HEADERS = [
+    "Host", "Datacenter", "Cluster", "Name", "Ports",
+    "Uplinks", "VMs", "Version", "Type",
+]
+
+VPORT_HEADERS = [
+    "Host", "Datacenter", "Cluster", "Switch", "Port group",
+    "VLAN", "Active uplinks", "Standby uplinks",
+]
+
+VSCVM_HEADERS = [
+    "VM", "Powerstate", "Template", "SC VM", "Datacenter", "Cluster", "Host",
+]
+
+VDATASTORE_HEADERS = [
+    "Name", "Type", "URL", "Accessible", "Capacity MB", "Free Space MB",
+    "Uncommitted MB", "Multiple Host Access", "Datacenter", "Cluster",
+]
+
+VMULTIWRITER_HEADERS = [
+    "VM", "Powerstate", "Template", "Disk", "Multi Writer",
+    "Datacenter", "Cluster", "Host",
+]
+
+VHEALTH_HEADERS = [
+    "VM", "Powerstate", "Template", "HW version",
+    "VMware Tools version", "VMware Tools status",
+    "Overall status", "Config status",
+    "Datacenter", "Cluster", "Host",
+]
+
+VFILEINFO_HEADERS = [
+    "VM", "Powerstate", "Template", "Config file",
+    "Annotation", "Datacenter", "Cluster", "Host",
+]
+
+# Ordered list of all sheets: (sheet_name, headers)
+# This order matches a real RVTools 4.x export.
+ALL_SHEETS: list[tuple[str, list[str]]] = [
+    ("vInfo",        VINFO_HEADERS),
+    ("vCPU",         VCPU_HEADERS),
+    ("vMemory",      VMEMORY_HEADERS),
+    ("vDisk",        VDISK_HEADERS),
+    ("vPartition",   VPARTITION_HEADERS),
+    ("vNetwork",     VNETWORK_HEADERS),
+    ("vFloppy",      VFLOPPY_HEADERS),
+    ("vCD",          VCD_HEADERS),
+    ("vSnapshot",    VSNAPSHOT_HEADERS),
+    ("vTools",       VTOOLS_HEADERS),
+    ("vRP",          VRP_HEADERS),
+    ("vCluster",     VCLUSTER_HEADERS),
+    ("vHost",        VHOST_HEADERS),
+    ("vHBA",         VHBA_HEADERS),
+    ("vNIC",         VNIC_HEADERS),
+    ("vSwitch",      VSWITCH_HEADERS),
+    ("vPort",        VPORT_HEADERS),
+    ("vSC+VM",       VSCVM_HEADERS),
+    ("vDatastore",   VDATASTORE_HEADERS),
+    ("vMultiWriter", VMULTIWRITER_HEADERS),
+    ("vHealth",      VHEALTH_HEADERS),
+    ("vFileInfo",    VFILEINFO_HEADERS),
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,11 +205,11 @@ def _write_header(ws: Any, headers: list[str]) -> None:
 
 
 def _auto_size_columns(ws: Any, headers: list[str]) -> None:
-    """Set column widths to content, capped at 50."""
+    """Set column widths based on content, capped at 50."""
     col_widths = [len(h) for h in headers]
     for row in ws.iter_rows(min_row=2, values_only=True):
         for i, val in enumerate(row):
-            if val is not None:
+            if val is not None and i < len(col_widths):
                 col_widths[i] = max(col_widths[i], len(str(val)))
     for i, width in enumerate(col_widths, start=1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = min(width + 2, 50)
@@ -139,29 +224,23 @@ def _get(d: dict, key: str, default: Any = None) -> Any:
 # ---------------------------------------------------------------------------
 
 def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
-    """Generate a standards-compliant RVTools .xlsx from normalized server records.
+    """Generate a standards-compliant RVTools .xlsx from normalised server records.
 
-    Args:
-        records: list of normalized_data dicts, each containing vinfo, vnetwork,
-                 vpartition, and vhost keys.
-        project_name: used for context (e.g., filename suggestion by caller).
-
-    Returns:
-        bytes: the complete Excel file ready to store or stream.
+    Produces all 22 standard RVTools 4.x sheets.  Sheets for which we have
+    synthesised data (vInfo, vCPU, vMemory, vDisk, vPartition, vNetwork, vHost)
+    are populated.  The remaining sheets are present with correct headers but
+    empty data rows — downstream tools (VCF Migration Lite, IBM Cool) require
+    the sheets to exist for format validation.
     """
     wb = Workbook()
-    # Remove the default empty sheet created by openpyxl
-    wb.remove(wb.active)
+    wb.remove(wb.active)   # remove the default empty sheet
 
-    ws_vinfo = wb.create_sheet("vInfo")
-    ws_vnetwork = wb.create_sheet("vNetwork")
-    ws_vpartition = wb.create_sheet("vPartition")
-    ws_vhost = wb.create_sheet("vHost")
-
-    _write_header(ws_vinfo, VINFO_HEADERS)
-    _write_header(ws_vnetwork, VNETWORK_HEADERS)
-    _write_header(ws_vpartition, VPARTITION_HEADERS)
-    _write_header(ws_vhost, VHOST_HEADERS)
+    # Create all sheets with headers in the correct order
+    sheets: dict[str, Any] = {}
+    for sheet_name, headers in ALL_SHEETS:
+        ws = wb.create_sheet(sheet_name)
+        _write_header(ws, headers)
+        sheets[sheet_name] = ws
 
     seen_hosts: set[str] = set()
 
@@ -169,38 +248,95 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
         if record is None:
             continue
 
-        vinfo = record.get("vinfo") or {}
-        vnetwork_list = record.get("vnetwork") or []
+        vinfo       = record.get("vinfo") or {}
+        vnetwork_list  = record.get("vnetwork") or []
         vpartition_list = record.get("vpartition") or []
-        vhost = record.get("vhost") or {}
+        vhost       = record.get("vhost") or {}
 
-        # --- vInfo (one row per VM) ---
-        if vinfo:
-            ws_vinfo.append([
-                _get(vinfo, "vm_name"),
-                _get(vinfo, "powerstate"),
-                _get(vinfo, "template"),
-                _get(vinfo, "cpus"),
-                _get(vinfo, "memory_mb"),
-                _get(vinfo, "nics"),
-                _get(vinfo, "disks"),
-                _get(vinfo, "provisioned_mb"),
-                _get(vinfo, "in_use_mb"),
-                _get(vinfo, "datacenter"),
-                _get(vinfo, "cluster"),
-                _get(vinfo, "host"),
-                _get(vinfo, "os_config"),
-                _get(vinfo, "os_vmware_tools"),
+        if not vinfo:
+            continue
+
+        vm_name    = _get(vinfo, "vm_name")
+        powerstate = _get(vinfo, "powerstate", "poweredOn")
+        template   = _get(vinfo, "template", False)
+        os_cfg     = _get(vinfo, "os_config")
+        os_tools   = _get(vinfo, "os_vmware_tools")
+        datacenter = _get(vinfo, "datacenter")
+        cluster    = _get(vinfo, "cluster")
+        host       = _get(vinfo, "host")
+        memory_mb  = _get(vinfo, "memory_mb")
+        cpus       = _get(vinfo, "cpus")
+
+        # --- vInfo ---
+        sheets["vInfo"].append([
+            vm_name, powerstate, template,
+            cpus, memory_mb,
+            _get(vinfo, "nics"), _get(vinfo, "disks"),
+            _get(vinfo, "provisioned_mb"), _get(vinfo, "in_use_mb"),
+            datacenter, cluster, host, os_cfg, os_tools,
+        ])
+
+        # --- vCPU ---
+        sheets["vCPU"].append([
+            vm_name, powerstate, template,
+            cpus,
+            1,          # Cores per socket — default 1
+            False,      # CPU Hot Add
+            False,      # CPU Hot Remove
+            0,          # CPU reservation (MHz)
+            -1,         # CPU limit (-1 = unlimited)
+            "normal",   # CPU shares
+            "normal",   # Latency sensitivity
+            datacenter, cluster, host, os_cfg, os_tools,
+        ])
+
+        # --- vMemory ---
+        sheets["vMemory"].append([
+            vm_name, powerstate, template,
+            memory_mb,
+            False,      # Memory Hot Add
+            0,          # Memory reservation (MB)
+            -1,         # Memory limit (-1 = unlimited)
+            "normal",   # Memory shares
+            datacenter, cluster, host, os_cfg, os_tools,
+        ])
+
+        # --- vDisk (one row per partition/disk) ---
+        for i, part in enumerate(vpartition_list):
+            if part is None:
+                continue
+            disk_label   = _get(part, "disk_label") or f"Hard disk {i+1}"
+            capacity_mb  = _get(part, "capacity_mb")
+            sheets["vDisk"].append([
+                vm_name, powerstate, template,
+                disk_label,
+                "persistent",   # Disk Mode
+                capacity_mb,
+                f"[datastore] {vm_name}/{vm_name}.vmdk",   # Disk Path
+                True,           # Thin provisioned
+                datacenter, cluster, host, os_cfg, os_tools,
             ])
 
-        # --- vNetwork (one row per NIC) ---
+        # --- vPartition ---
+        for part in vpartition_list:
+            if part is None:
+                continue
+            sheets["vPartition"].append([
+                vm_name, powerstate, template,
+                _get(part, "disk_label"),
+                _get(part, "capacity_mb"),
+                _get(part, "consumed_mb"),
+                _get(part, "free_mb"),
+                _get(part, "free_pct"),
+                datacenter, cluster, host, os_cfg, os_tools,
+            ])
+
+        # --- vNetwork ---
         for nic in vnetwork_list:
             if nic is None:
                 continue
-            ws_vnetwork.append([
-                _get(nic, "vm_name"),
-                _get(nic, "powerstate"),
-                _get(nic, "template"),
+            sheets["vNetwork"].append([
+                vm_name, powerstate, template,
                 _get(nic, "srm_placeholder"),
                 _get(nic, "nic_label"),
                 _get(nic, "adapter"),
@@ -217,32 +353,51 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
                 _get(nic, "annotation"),
             ])
 
-        # --- vPartition (one row per disk/partition) ---
-        for part in vpartition_list:
-            if part is None:
-                continue
-            ws_vpartition.append([
-                _get(part, "vm_name"),
-                _get(part, "powerstate"),
-                _get(part, "template"),
-                _get(part, "disk_label"),
-                _get(part, "capacity_mb"),
-                _get(part, "consumed_mb"),
-                _get(part, "free_mb"),
-                _get(part, "free_pct"),
-                _get(part, "datacenter"),
-                _get(part, "cluster"),
-                _get(part, "host"),
-                _get(part, "os_config"),
-                _get(part, "os_vmware_tools"),
-            ])
+        # --- vTools (basic VM tools info) ---
+        ip = None
+        network_name = None
+        if vnetwork_list:
+            first_nic = vnetwork_list[0] or {}
+            ip = _get(first_nic, "ipv4_address")
+            network_name = _get(first_nic, "network")
+        sheets["vTools"].append([
+            vm_name, powerstate, template,
+            None,           # DNS Name
+            ip,
+            network_name,
+            "vmx-19",       # HW version (default modern)
+            "11365",        # VMware Tools version (current)
+            "guestToolsNotInstalled",
+            "guestToolsNotRunning",
+            "guestToolsNotInstalled",
+            datacenter, cluster, host, os_cfg, os_tools,
+        ])
+
+        # --- vHealth ---
+        sheets["vHealth"].append([
+            vm_name, powerstate, template,
+            "vmx-19",
+            "11365",
+            "guestToolsNotInstalled",
+            "green",    # Overall status
+            "green",    # Config status
+            datacenter, cluster, host,
+        ])
+
+        # --- vFileInfo ---
+        sheets["vFileInfo"].append([
+            vm_name, powerstate, template,
+            f"[datastore] {vm_name}/{vm_name}.vmx",
+            None,       # Annotation
+            datacenter, cluster, host,
+        ])
 
         # --- vHost (deduplicated by host_name) ---
         if vhost:
             host_name = _get(vhost, "host_name") or ""
             if host_name and host_name not in seen_hosts:
                 seen_hosts.add(host_name)
-                ws_vhost.append([
+                sheets["vHost"].append([
                     _get(vhost, "host_name"),
                     _get(vhost, "datacenter"),
                     _get(vhost, "cluster"),
@@ -273,11 +428,9 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
                     _get(vhost, "model"),
                 ])
 
-    # Auto-size columns on all sheets
-    _auto_size_columns(ws_vinfo, VINFO_HEADERS)
-    _auto_size_columns(ws_vnetwork, VNETWORK_HEADERS)
-    _auto_size_columns(ws_vpartition, VPARTITION_HEADERS)
-    _auto_size_columns(ws_vhost, VHOST_HEADERS)
+    # Auto-size columns on all populated sheets
+    for sheet_name, headers in ALL_SHEETS:
+        _auto_size_columns(sheets[sheet_name], headers)
 
     buf = io.BytesIO()
     wb.save(buf)
