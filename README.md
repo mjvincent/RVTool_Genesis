@@ -155,3 +155,22 @@ open http://localhost:8001/api/docs
 ## Sample File
 
 A real RVTools export is included at `Samples/SizingWorkshop-RVTools.xlsx` as a reference for the target output schema. You can upload it directly to the app to test the full pipeline end-to-end.
+
+## Spreadsheet Parser Notes
+
+The parser handles real-world freeform spreadsheets automatically:
+
+- **Any column layout** — no template required; columns are mapped by the AI
+- **Phantom rows** — Excel workbooks often contain thousands of empty rows beyond the last data row (Excel's max is 1,048,576). The parser identifies real rows (≥ 2 non-null cells) *before* forward-filling merged cells, preventing ghost rows from being counted as servers
+- **Merged cells** — forward-fill propagates values across visually merged cells
+- **Mixed types** — all values are normalised to JSON-safe Python types (no numpy, no NaT)
+- **Title/banner rows** — if row 0 has fewer than 2 non-null headers, the parser falls back to row 1 as the header row
+- **Supported formats** — `.xlsx`, `.xls`, `.csv` up to 50 MB
+
+## Changelog
+
+### Recent fixes
+- **Parser phantom-row fix** — `ffill` was propagating last-row values into thousands of Excel phantom rows before `dropna` ran, inflating record counts (e.g. 88 servers showing as 413). Fixed by snapshotting a "real row" mask before `ffill` and filtering to it afterwards.
+- **File-replace doubling** — uploading a replacement file now clears all previous records/assumptions for the project before inserting the new batch.
+- **Upload count display** — the UI now correctly reads `row_count` from the upload response (was reading a non-existent field, always showing 0).
+- **Model docs** — all references updated from `gemma4:e4b` to `phi4-mini` (the current production model).
