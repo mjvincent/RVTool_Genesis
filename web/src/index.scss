@@ -397,6 +397,11 @@ body { background: #f4f4f4; }
   margin-bottom: 0.5rem;
 }
 
+@keyframes norm-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+
 .norm-complete-banner {
   display: flex;
   align-items: center;

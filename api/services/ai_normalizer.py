@@ -1,4 +1,4 @@
-"""AI normalizer — calls Ollama (gemma4:e4b) to map raw server data to the RVTools schema.
+"""AI normalizer — calls Ollama to map raw server data to the RVTools schema.
 
 Strategy: Ask the LLM only for the fields it can meaningfully derive from customer data
 (vinfo, vnetwork, vpartition, server_type, and assumptions). The vHost record is
@@ -590,17 +590,78 @@ def _repair_truncated_json(text: str) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Ollama call — with timeout and retry
+# ---------------------------------------------------------------------------
+
+# Per-record timeout: 120 s is ~10× the average phi4-mini response time.
+# If Ollama hangs longer than this the record falls back to the Python synthesizer
+# instead of blocking the entire queue for 5 minutes.
+_OLLAMA_TIMEOUT_SECONDS = 120.0
+_MAX_RETRIES = 1   # retry once on timeout/connect error before falling back
+
+
+def _call_ollama(payload: dict) -> str:
+    """POST to Ollama /api/generate with timeout and retry.
+
+    Returns the raw response text string.
+    Raises ValueError on all unrecoverable errors.
+    """
+    url = f"{settings.ollama_base_url}/api/generate"
+    last_exc: Exception | None = None
+
+    for attempt in range(1, _MAX_RETRIES + 2):   # attempts = retries + 1 original
+        try:
+            with httpx.Client(timeout=_OLLAMA_TIMEOUT_SECONDS) as client:
+                response = client.post(url, json=payload)
+                response.raise_for_status()
+            raw_text: str = response.json().get("response", "")
+            if not raw_text:
+                raise ValueError(
+                    "Ollama returned an empty response. "
+                    "The model may still be loading — wait a moment and retry."
+                )
+            return raw_text
+        except httpx.ConnectError as exc:
+            raise ValueError(
+                f"Cannot reach Ollama at {settings.ollama_base_url}. "
+                "Make sure the Ollama app is running on your Mac (look for the llama "
+                "icon in the menu bar), then try again."
+            ) from exc
+        except httpx.TimeoutException as exc:
+            last_exc = exc
+            logger.warning(
+                "Ollama request timed out after %.0fs (attempt %d/%d)",
+                _OLLAMA_TIMEOUT_SECONDS, attempt, _MAX_RETRIES + 1,
+            )
+            # Brief pause before retry so Ollama can clear its queue
+            import time; time.sleep(2)
+            continue
+        except httpx.HTTPStatusError as exc:
+            raise ValueError(
+                f"Ollama returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
+            ) from exc
+
+    raise ValueError(
+        f"Ollama timed out after {_MAX_RETRIES + 1} attempt(s) "
+        f"({_OLLAMA_TIMEOUT_SECONDS:.0f}s each). "
+        "Record will be synthesized from raw data."
+    ) from last_exc
+
+
 def normalize_record(raw_data: dict) -> dict:
-    """Call Ollama (gemma4:e4b) to normalize a single raw server record.
+    """Normalize a single raw server record using Ollama.
 
-    Reaches the host-machine Ollama service via host.docker.internal — no
-    additional container or API key is required.
+    Calls Ollama with a 120 s timeout and one automatic retry.
+    If Ollama times out or returns unparseable JSON, the record is
+    synthesized from raw data by the Python fallback — it is never
+    left in a permanently-stuck 'processing' state.
 
-    vHost is synthesized in Python (not by the LLM) to stay within context limits.
+    vHost is always synthesized in Python (not by the LLM) to stay
+    within context limits.
 
     Returns a dict with keys:
         server_type, vinfo, vnetwork, vpartition, vhost, assumptions
-    Raises ValueError if Ollama is unreachable or returns invalid JSON.
     """
     prompt = _build_prompt(raw_data)
 
@@ -616,61 +677,38 @@ def normalize_record(raw_data: dict) -> dict:
     }
 
     try:
-        with httpx.Client(timeout=300.0) as client:
-            response = client.post(
-                f"{settings.ollama_base_url}/api/generate",
-                json=payload,
-            )
-            response.raise_for_status()
-    except httpx.ConnectError as exc:
-        raise ValueError(
-            f"Cannot reach Ollama at {settings.ollama_base_url}. "
-            "Make sure the Ollama app is running on your Mac (look for the llama icon "
-            "in the menu bar), then try again."
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        raise ValueError(
-            f"Ollama returned HTTP {exc.response.status_code}: {exc.response.text[:300]}"
-        ) from exc
-
-    raw_text: str = response.json().get("response", "")
-    if not raw_text:
-        raise ValueError(
-            "Ollama returned an empty response. The model may still be loading — "
-            "wait a moment and retry."
-        )
+        raw_text = _call_ollama(payload)
+    except ValueError as exc:
+        # Ollama unreachable or timed out after retries — use Python synthesizer
+        logger.warning("Ollama failed (%s) — using Python synthesizer for this record", exc)
+        return _synthesize_from_raw(raw_data)
 
     cleaned = _extract_json(raw_text)
 
     try:
         result = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        # Try to repair truncated JSON by closing open structures
+    except json.JSONDecodeError:
         repaired = _repair_truncated_json(cleaned)
         try:
             result = json.loads(repaired)
-            logger.warning("Repaired truncated JSON for response (was %d chars)", len(cleaned))
+            logger.warning("Repaired truncated JSON (was %d chars)", len(cleaned))
         except json.JSONDecodeError:
-            # Last resort: synthesize the record from raw data in Python
             logger.warning(
-                "Ollama JSON unrecoverable — falling back to Python synthesizer for this record. "
-                "Preview: %s", raw_text[:200]
+                "Ollama JSON unrecoverable — Python synthesizer. Preview: %s",
+                raw_text[:200],
             )
             return _synthesize_from_raw(raw_data)
 
-    # Fill any missing top-level keys with defaults rather than hard-failing
+    # Fill missing top-level keys with safe defaults
     for key, default in [("server_type", "vm"), ("vnetwork", []), ("vpartition", []), ("assumptions", [])]:
         if key not in result:
             result[key] = default
     if "vinfo" not in result:
-        # vinfo is the only key we truly can't default — fall back to Python synthesizer
-        logger.warning("LLM response missing vinfo entirely — using Python synthesizer")
+        logger.warning("LLM response missing vinfo — using Python synthesizer")
         return _synthesize_from_raw(raw_data)
 
-    # Post-processing sanity checks on numeric fields
     result = _sanitize_numeric_fields(result)
 
-    # Synthesize vHost in Python — deterministic, no LLM context budget needed
     vinfo = result.get("vinfo", {})
     vhost, vhost_assumptions = _synthesize_vhost(
         vm_name=vinfo.get("vm_name", "unknown"),
@@ -679,7 +717,6 @@ def normalize_record(raw_data: dict) -> dict:
         memory_mb=int(vinfo.get("memory_mb", 4096)),
         cpus=int(vinfo.get("cpus", 2)),
     )
-
     result["vhost"] = vhost
     result["assumptions"] = result.get("assumptions", []) + vhost_assumptions
 
