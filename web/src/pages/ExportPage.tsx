@@ -30,10 +30,16 @@ export default function ExportPage() {
     try {
       const exp = await api.exports.generateRVTools(projectId);
       const resp = await api.exports.downloadRVTools(projectId, exp.id);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `RVTools-${projectId}.xlsx`; a.click();
+      // Use server-supplied filename so the file has a meaningful name, not just the UUID
+      const disposition = resp.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      a.href = url;
+      a.download = match ? match[1] : (exp as any).filename || `RVTools-${projectId}.xlsx`;
+      a.click();
       URL.revokeObjectURL(url);
       setRvDone(true);
     } catch { setError('Failed to generate RVTools export.'); }
@@ -45,10 +51,15 @@ export default function ExportPage() {
     try {
       const exp = await api.exports.generateAssumptions(projectId);
       const resp = await api.exports.downloadAssumptions(projectId, exp.id);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `Assumptions-${projectId}.xlsx`; a.click();
+      const disposition = resp.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      a.href = url;
+      a.download = match ? match[1] : (exp as any).filename || `Assumptions-${projectId}.xlsx`;
+      a.click();
       URL.revokeObjectURL(url);
       setAsmDone(true);
     } catch { setError('Failed to generate assumptions report.'); }
