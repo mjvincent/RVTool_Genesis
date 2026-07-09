@@ -2,23 +2,23 @@
 
 A containerized tool that converts customer server inventory spreadsheets into IBM RVTools-compatible output for use with the IBM Cool sizing tool.
 
-Powered by **Ollama (gemma4:e4b)** — fully local AI, no API key, no cloud. Customer data never leaves your machine.
+Powered by **Ollama (phi4-mini)** — fully local AI, no API key, no cloud. Customer data never leaves your machine.
 
 ## What it does
 
 1. **Upload** any customer-produced spreadsheet (Excel/CSV) listing desired virtual or bare metal servers — any column layout, freeform
-2. **AI Normalization** — a local Gemma 4 model maps freeform customer columns to the RVTools schema, fills in missing data, and documents every inference as an assumption
+2. **AI Normalization** — a local phi4-mini model maps freeform customer columns to the RVTools schema, fills in missing data, and documents every inference as an assumption
 3. **Review** — inspect all normalized records and AI assumptions before exporting
 4. **Export** — download a standards-compliant RVTools `.xlsx` file (4 tabs: vInfo, vNetwork, vPartition, vHost) ready for the IBM Cool tool, plus a separate Assumptions Report documenting every AI decision
 
 ## Prerequisites
 
 - [OrbStack](https://orbstack.dev) (recommended) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [Ollama](https://ollama.com) — installed and running on your Mac with `gemma4:e4b` available
+- [Ollama](https://ollama.com) — installed and running on your Mac with `phi4-mini` available
 
   ```bash
   # Install Ollama from https://ollama.com then pull the model:
-  ollama pull gemma4:e4b
+  ollama pull phi4-mini
   ```
 
 ## Quick Start
@@ -76,7 +76,7 @@ All defaults are pre-configured and work without changes. Edit `.env` only if yo
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint (host Mac from inside container) |
-| `OLLAMA_MODEL` | `gemma4:e4b` | Ollama model to use for normalization |
+| `OLLAMA_MODEL` | `phi4-mini` | Ollama model to use for normalization |
 | `DATABASE_URL` | `postgresql://rvtool:...@db:5432/rvtooldb` | PostgreSQL connection |
 | `POSTGRES_DB` | `rvtooldb` | Database name |
 | `POSTGRES_USER` | `rvtool` | Database user |
@@ -101,7 +101,7 @@ OrbStack / Docker Compose
 │   │
 │   └── services/
 │       ├── spreadsheet_parser   — pandas: handles any freeform .xlsx/.csv
-│       ├── ai_normalizer        — Ollama gemma4:e4b: maps columns, fills gaps
+│       ├── ai_normalizer        — Ollama phi4-mini: maps columns, fills gaps
 │       ├── network_inference    — default subnet/gateway/NIC logic
 │       ├── rvtools_generator    — openpyxl: generates 4-tab RVTools file
 │       ├── assumptions_generator — openpyxl: generates Assumptions Report
@@ -117,7 +117,7 @@ OrbStack / Docker Compose
 │
 [host Mac — NOT in Docker]
 └── Ollama :11434
-    └── gemma4:e4b  ← reached via host.docker.internal from containers
+    └── phi4-mini  ← reached via host.docker.internal from containers
 ```
 
 ## Generated RVTools Schema

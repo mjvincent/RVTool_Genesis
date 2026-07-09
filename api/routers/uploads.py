@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
@@ -93,6 +93,24 @@ async def upload_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Parsing failed: {exc}",
         ) from exc
+
+    # --- Delete any existing records and uploads for this project -------------
+    # Prevents doubling when user replaces the file: old records in DB must go.
+    await db.execute(
+        delete(Assumption).where(Assumption.project_id == project_id)
+    )
+    await db.execute(
+        delete(ServerRecord).where(ServerRecord.project_id == project_id)
+    )
+    # Delete old Upload rows except the one we just created
+    old_uploads_result = await db.execute(
+        select(Upload).where(
+            Upload.project_id == project_id,
+            Upload.id != upload.id,
+        )
+    )
+    for old_upload in old_uploads_result.scalars().all():
+        await db.delete(old_upload)
 
     # --- Persist server records -----------------------------------------------
     for row in rows:

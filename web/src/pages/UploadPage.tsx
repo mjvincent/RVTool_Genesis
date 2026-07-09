@@ -46,7 +46,7 @@ export default function UploadPage() {
     try {
       const result = await api.uploads.upload(projectId, file);
       if (result.error) throw new Error(result.error);
-      const count = result.record_count ?? result.records_created ?? 0;
+      const count = result.row_count ?? result.record_count ?? result.records_created ?? 0;
       setUploadedFile({ name: file.name, count });
       setExistingCount(count);
     } catch (err: any) {
