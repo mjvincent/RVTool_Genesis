@@ -24,7 +24,10 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 def _to_python(value: Any) -> Any:
-    """Convert a single cell value to a JSON-serialisable Python native type."""
+    """Convert a single cell value to a JSON-serialisable Python native type.
+
+    Returns None for any value that is effectively empty (None, NaN, empty/whitespace string).
+    """
     if value is None:
         return None
     # pandas NA / NaT / NaN sentinel
@@ -45,6 +48,9 @@ def _to_python(value: Any) -> Any:
     # pandas Timestamp / datetime-like
     if hasattr(value, "isoformat"):
         return value.isoformat()
+    # Empty or whitespace-only strings — treat as None so phantom Excel rows are dropped
+    if isinstance(value, str) and not value.strip():
+        return None
     return value
 
 
@@ -116,11 +122,18 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
     df = df[good_cols].copy()
     df.rename(columns={orig: renamed[orig] for orig in good_cols}, inplace=True)
 
+    # --- Identify real rows BEFORE forward-fill -------------------------------
+    # Excel files frequently have thousands of phantom rows beyond the last data
+    # row. Their cells appear as NaN. ffill() would propagate real values into
+    # them, making them look populated.  We mark rows with >= 2 non-null values
+    # now (pre-ffill) as "real", then discard everything else after ffill runs.
+    real_mask = df.notna().sum(axis=1) >= 2
+
     # --- Forward-fill (handles merged cells in Excel) -------------------------
     df.ffill(inplace=True)
 
-    # --- Drop all-null rows ---------------------------------------------------
-    df.dropna(how="all", inplace=True)
+    # --- Keep only rows that were real before ffill ---------------------------
+    df = df[real_mask]
 
     # --- Convert values -------------------------------------------------------
     rows: list[dict] = []
