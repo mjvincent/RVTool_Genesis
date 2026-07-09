@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routers.health import router as health_router
+from routers import exports, processing, projects, uploads
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +26,10 @@ app.add_middleware(
 )
 
 app.include_router(health_router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
+app.include_router(uploads.router, prefix="/api")
+app.include_router(processing.router, prefix="/api")
+app.include_router(exports.router, prefix="/api")
 
 
 @app.on_event("startup")

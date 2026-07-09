@@ -4,7 +4,7 @@
 
 Build a containerized, full-stack web application that:
 1. Accepts a **freeform customer-produced spreadsheet** (virtual or bare metal server inventory)
-2. Uses **Claude AI (Anthropic API)** to parse, normalize, and fill in missing data
+2. Uses **Ollama (local LLM, gemma4)** running natively on the host Mac to parse, normalize, and fill in missing data — **no API key required, no cloud, data never leaves the machine**
 3. Generates a **standards-compliant RVTools `.xlsx` export** (4 tabs: vInfo, vNetwork, vPartition, vHost) consumable by the IBM Cool tool
 4. Produces a separate **Assumptions document** capturing every AI-inferred decision
 5. Persists all projects and work sessions in a **local PostgreSQL database**
@@ -26,7 +26,7 @@ Build a containerized, full-stack web application that:
 |---|---|
 | Frontend | React 18 + IBM Carbon Design System v11 |
 | Backend API | Python 3.12 + FastAPI |
-| AI Layer | Anthropic Claude API (claude-3-5-sonnet) via `anthropic` SDK |
+| AI Layer | Ollama (gemma4, native macOS service) via `httpx` HTTP calls to `host.docker.internal:11434` |
 | Spreadsheet I/O | `pandas` + `openpyxl` |
 | Database | PostgreSQL 16 |
 | ORM + Migrations | SQLAlchemy 2.x + Alembic |
@@ -37,7 +37,7 @@ Build a containerized, full-stack web application that:
 
 ## Sub-Task 1 — Project Scaffolding and Docker Compose Stack
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Establish the repository structure, Docker Compose configuration, and all service skeletons so every subsequent sub-task has a working local dev environment to build into.
@@ -74,7 +74,7 @@ Establish the repository structure, Docker Compose configuration, and all servic
 
 ## Sub-Task 2 — Database Schema and Migrations
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Define the PostgreSQL data model that stores projects, uploaded spreadsheets, parsed server records, generated outputs, and assumptions. Use Alembic for versioned migrations.
@@ -108,7 +108,7 @@ Define the PostgreSQL data model that stores projects, uploaded spreadsheets, pa
 
 ## Sub-Task 3 — Spreadsheet Upload and Raw Parsing API
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Build the backend API endpoints for project management and spreadsheet file upload. Parse the uploaded `.xlsx` or `.csv` file into raw row objects stored as JSONB in the database — no AI yet, just structural parsing.
@@ -143,7 +143,7 @@ Build the backend API endpoints for project management and spreadsheet file uplo
 
 ## Sub-Task 4 — Claude AI Normalization and Assumption Engine
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Build the core AI processing pipeline. For each `server_record` with raw data, call the Claude API to map customer columns to RVTools schema fields, fill in missing values using intelligent defaults, and generate structured assumptions for every inferred decision.
@@ -182,7 +182,7 @@ Build the core AI processing pipeline. For each `server_record` with raw data, c
 
 ## Sub-Task 5 — RVTools XLSX Export Generation
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Build the export service that takes all normalized server records for a project and generates a standards-compliant RVTools `.xlsx` file with the exact 4-tab structure (vInfo, vNetwork, vPartition, vHost) that the IBM Cool tool expects.
@@ -224,7 +224,7 @@ Build the export service that takes all normalized server records for a project 
 
 ## Sub-Task 6 — Assumptions Export (Separate Document)
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Generate a clean, human-readable Assumptions Report as a separate `.xlsx` file (or an additional tab in the RVTools export that does NOT interfere with Cool tool processing). This documents every AI decision for client review and audit trail.
@@ -258,7 +258,7 @@ Generate a clean, human-readable Assumptions Report as a separate `.xlsx` file (
 
 ## Sub-Task 7 — Carbon Design System Frontend
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Build the complete React + Carbon Design System UI that provides the full user workflow: project management, file upload, AI processing status, record review/editing, and export download.
@@ -307,7 +307,7 @@ Build the complete React + Carbon Design System UI that provides the full user w
 
 ## Sub-Task 8 — Integration, End-to-End Testing, and README
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ### Intent
 Wire the full pipeline together, validate the end-to-end flow with the sample RVTools file as a reference, and write the developer README so anyone can run the project from scratch.
@@ -378,3 +378,130 @@ OrbStack (Docker Compose)
 | AI processing | FastAPI BackgroundTasks | No Redis/Celery needed for this use case |
 | Memory/disk units | Always MB in RVTools output | Matches sample file schema exactly |
 | vHost for VMs | Synthesized representative host record | Required by Cool tool; VMs must reference a host |
+
+---
+
+## Sub-Task 9 — Swap AI Provider: Anthropic → Ollama (gemma4)
+
+**Status:** [ ] pending
+
+### Intent
+Replace the Anthropic Claude SDK with direct HTTP calls to the locally-running Ollama service. The user has Ollama installed natively on macOS with gemma4 already pulled. The Docker containers will reach the host Ollama at `host.docker.internal:11434`. No API key is required — this is the primary motivation for this change.
+
+### Expected Outcomes
+- `api/services/ai_normalizer.py` makes HTTP calls to `http://host.docker.internal:11434/api/generate` instead of the Anthropic API
+- The `anthropic` Python package is removed from `requirements.txt`
+- `api/core/config.py` replaces `anthropic_api_key` with `ollama_base_url` and `ollama_model`
+- `.env.example` removes `ANTHROPIC_API_KEY` and adds `OLLAMA_BASE_URL` and `OLLAMA_MODEL`
+- `README.md` updated to reflect Ollama as the AI provider — no API key section
+- All processing behavior (batching, assumptions, confidence levels) is identical to before
+- A clear error message is shown if Ollama is not reachable (connection refused)
+
+### Todo List
+1. Edit `api/services/ai_normalizer.py`:
+   - Remove `import anthropic` and the `_get_client()` singleton
+   - Add `import httpx`
+   - Replace `normalize_record()` to POST to `{settings.ollama_base_url}/api/generate` with `{"model": settings.ollama_model, "prompt": ..., "stream": false, "options": {"temperature": 0, "num_predict": 4096}}`
+   - Parse `response.json()["response"]` as the model output text
+   - Keep `_strip_markdown_fences()` — add `_extract_json()` that finds the first `{` to last `}` in the response (local LLMs sometimes emit a preamble before the JSON)
+   - Use `httpx.Client(timeout=120.0)` — local LLMs can be slower than API calls
+   - On `httpx.ConnectError`: raise a descriptive `ValueError` telling the user Ollama is not running
+   - The system prompt and JSON output format remain identical — just add a concrete example of the full expected JSON shape to help the local model stay on-format
+2. Edit `api/core/config.py`:
+   - Remove `anthropic_api_key` field
+   - Add `ollama_base_url: str = "http://host.docker.internal:11434"`
+   - Add `ollama_model: str = "gemma3:4b"` (Ollama's tag for gemma4 — verify: `ollama list` output)
+3. Remove `anthropic==0.34.2` from `api/requirements.txt`
+4. Update `.env.example`: remove `ANTHROPIC_API_KEY`, add `OLLAMA_BASE_URL=http://host.docker.internal:11434` and `OLLAMA_MODEL=gemma3:4b`
+5. Update `README.md`: replace API key prerequisite with "Ollama running with gemma3:4b pulled (`ollama pull gemma3:4b`)"
+6. Rebuild containers: `docker compose up --build`
+7. Test: process a single record and verify `normalized_data` is populated
+
+### Relevant Context
+- Ollama runs at `http://localhost:11434` on the Mac host
+- From inside Docker containers on OrbStack/Docker Desktop, the host is reachable at `http://host.docker.internal:11434`
+- Ollama's generate API: `POST /api/generate` with body `{"model": "...", "prompt": "...", "stream": false}`
+- Response body: `{"response": "...", "done": true, ...}`
+- Gemma4 on OrbStack on Apple Silicon (arm64) is fast — typically 5-15 seconds per record
+- The model tag in Ollama for gemma4 may be `gemma3:4b` — confirm with `ollama list` before hardcoding
+
+---
+
+## Sub-Task 10 — One-Click Setup Script for End Users
+
+**Status:** [ ] pending
+
+### Intent
+Create a `setup.sh` script at the repo root that provides a fully automated, one-click startup experience. An end user should be able to clone the repo, run `./setup.sh`, and have the app open in their browser — with no manual file editing, no terminal commands beyond the one script, and clear guidance if anything is missing.
+
+### Expected Outcomes
+- `./setup.sh` is the single command needed to start the full application
+- The script validates all prerequisites and gives clear, actionable error messages if anything is missing
+- `.env` is created automatically from `.env.example` — no manual editing required
+- The app opens automatically in the default browser when ready
+- The script is idempotent — safe to run multiple times (re-run brings app back up if it was stopped)
+- `README.md` updated so "Quick Start" is a single code block: `git clone ... && cd RVTool_Genesis && ./setup.sh`
+
+### Todo List
+1. Create `setup.sh` at the project root (chmod +x):
+   ```bash
+   #!/usr/bin/env bash
+   set -e
+   ```
+   The script must perform these steps in order:
+
+   **Step 1 — Check prerequisites:**
+   - Check `docker` command exists; if not, print message pointing to OrbStack/Docker Desktop and exit 1
+   - Check `docker compose` (v2 plugin) works; if not, print message and exit 1
+   - Check Ollama is reachable: `curl -sf http://localhost:11434` — if not, print "Ollama is not running. Start the Ollama app or run: ollama serve" and exit 1
+   - Check gemma3:4b (or configured model) is available: `ollama list | grep gemma3` — if not found, print "Pulling gemma3:4b model (this is a one-time ~3GB download)..." and run `ollama pull gemma3:4b`
+
+   **Step 2 — Environment setup:**
+   - If `.env` does not exist: copy `.env.example` → `.env` and print "Created .env from .env.example"
+   - If `.env` already exists: print ".env already exists — skipping (delete it to reset)"
+   - No API key prompting needed — all defaults work
+
+   **Step 3 — Start containers:**
+   - Run `docker compose up --build -d`
+   - Print "Starting RVTool Genesis containers..."
+
+   **Step 4 — Wait for API health:**
+   - Poll `http://localhost:8001/api/health` every 2 seconds, up to 60 seconds
+   - Print a spinner/dots while waiting: "Waiting for API to be ready..."
+   - If health check passes: print "✓ API is ready"
+   - If timeout: print "API did not start in time. Run: docker compose logs api" and exit 1
+
+   **Step 5 — Open browser:**
+   - Run `open http://localhost:3001` (macOS `open` command)
+   - Print "✓ RVTool Genesis is running at http://localhost:3001"
+   - Print "  API docs available at http://localhost:8001/api/docs"
+   - Print "  To stop: docker compose down"
+   - Print "  To view logs: docker compose logs -f"
+
+2. Make `setup.sh` executable in the repo: the file permission `chmod +x` needs to be set — add a note in README that if permissions are lost after clone, run `chmod +x setup.sh`
+
+3. Update `README.md`:
+   - Change **Quick Start** section to:
+     ```bash
+     git clone <repo-url>
+     cd RVTool_Genesis
+     ./setup.sh
+     ```
+   - Remove the multi-step manual setup (cp .env.example, editing API key, docker compose up)
+   - Keep the "Prerequisites" section but simplify to: OrbStack or Docker Desktop + Ollama with gemma3:4b
+   - Add a "Stopping the app" section: `docker compose down`
+   - Add a "Restarting" section: just run `./setup.sh` again
+
+4. Update `Makefile` — add a `setup` target:
+   ```makefile
+   setup:
+       ./setup.sh
+   ```
+
+### Relevant Context
+- macOS `open` command opens URLs in the default browser
+- OrbStack on macOS makes `host.docker.internal` available automatically — no extra config needed
+- The script must use `#!/usr/bin/env bash` not `#!/bin/bash` for maximum macOS compatibility
+- `curl -sf` returns exit code 0 on success, non-zero on failure — use this for health checks
+- Docker Compose v2 is invoked as `docker compose` (space, not hyphen) — v1's `docker-compose` is deprecated
+

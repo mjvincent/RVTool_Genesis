@@ -10,7 +10,7 @@ from .database import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 class Project(Base):
