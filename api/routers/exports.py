@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import get_db
 from db.models import Assumption, AssumptionsExport, Project, RVToolsExport, ServerRecord
 from routers.projects import _get_project_or_404
-from services import assumptions_generator, rvtools_generator
+from services import assumptions_generator, rvtools_generator, vpc_calculator_generator
 from services.rvtools_generator import generate_rvtools_pure_xlsx
 
 logger = logging.getLogger(__name__)
@@ -294,6 +294,74 @@ async def download_rvtools_export(
             "Content-Length": str(len(export.file_data)),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# IBM Cloud VPC Calculator export (3-sheet) endpoint
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/projects/{project_id}/export/vpc-calculator",
+    response_model=RVToolsExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_vpc_calculator_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RVToolsExportResponse:
+    """Generate a 3-sheet IBM Cloud VPC Calculator workbook.
+
+    Mirrors the output of the rvtools2vpc.vmware-solutions.cloud.ibm.com tool:
+      - Project Settings (Zone + Subnet + Compute + Data Volume rows per VM)
+      - Exceptions       (VMs with no matching IBM VPC profile)
+      - Data Domains     (static IBM reference lookup table)
+
+    Target region and datacenter are read from the project's vpc_region /
+    vpc_datacenter fields (set at project creation, editable in New Project form).
+    """
+    project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
+
+    x86_records = [
+        r for r in enriched
+        if not r["is_excluded"] and r["server_type"] != "powervs"
+    ]
+    if not x86_records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No complete x86 records found for this project. "
+                   "Run processing first.",
+        )
+
+    vpc_region     = project.vpc_region or "us-south"
+    vpc_datacenter = project.vpc_datacenter or "us-south-1"
+
+    file_bytes = vpc_calculator_generator.generate_vpc_calculator_xlsx(
+        x86_records,
+        project.name,
+        vpc_region=vpc_region,
+        vpc_datacenter=vpc_datacenter,
+    )
+
+    safe_name = project.name.replace(" ", "_")
+    filename = f"VPC_Calculator_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    export = RVToolsExport(
+        project_id=project_id,
+        file_data=file_bytes,
+        filename=filename,
+        record_count=len(x86_records),
+        status="complete",
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+
+    logger.info(
+        "VPC Calculator export %s generated for project %s (%d records, region=%s, dc=%s)",
+        export.id, project_id, len(x86_records), vpc_region, vpc_datacenter,
+    )
+    return RVToolsExportResponse.model_validate(export)
 
 
 # ---------------------------------------------------------------------------

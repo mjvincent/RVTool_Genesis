@@ -75,9 +75,11 @@ export default function ExportPage() {
   const [powervsCount, setPowervsCount] = useState(0);
 
   // x86 exports
+  const [vpcLoading, setVpcLoading]     = useState(false);
   const [coolLoading, setCoolLoading]   = useState(false);
   const [pureLoading, setPureLoading]   = useState(false);
   const [asmLoading, setAsmLoading]     = useState(false);
+  const [vpcDone, setVpcDone]           = useState(false);
   const [coolDone, setCoolDone]         = useState(false);
   const [pureDone, setPureDone]         = useState(false);
   const [asmDone, setAsmDone]           = useState(false);
@@ -100,6 +102,17 @@ export default function ExportPage() {
   const x86Count = recordCount - powervsCount;
 
   // ── x86 handlers ──────────────────────────────────────────────────────────
+  async function handleVPCCalculator() {
+    setVpcLoading(true); setError('');
+    try {
+      const exp = await api.exports.generateVPCCalculator(projectId);
+      const resp = await api.exports.downloadVPCCalculator(projectId, exp.id);
+      await triggerDownload(resp, (exp as any).filename || `VPC_Calculator_${projectId}.xlsx`);
+      setVpcDone(true);
+    } catch { setError('Failed to generate IBM VPC Calculator export.'); }
+    finally { setVpcLoading(false); }
+  }
+
   async function handleCoolExport() {
     setCoolLoading(true); setError('');
     try {
@@ -210,7 +223,29 @@ export default function ExportPage() {
                 ({x86Count} server{x86Count !== 1 ? 's' : ''})
               </span>
             </h2>
-            <div className="export-card-row" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginBottom: '2.5rem' }}>
+            <div className="export-card-row" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr', marginBottom: '2.5rem' }}>
+
+              {/* Card 0: VPC Calculator Export — PRIMARY, direct IBM Cost Estimator upload */}
+              <div className="export-card" style={{ borderTop: '3px solid #0f62fe' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <DocumentDownload size={20} style={{ color: '#0f62fe', flexShrink: 0 }} />
+                  <span className="export-card-title">VPC Calculator Export</span>
+                  <InfoTooltip text="3-sheet IBM Cloud VPC Calculator workbook (Project Settings, Exceptions, Data Domains) — equivalent to the output of rvtools2vpc.vmware-solutions.cloud.ibm.com. Upload directly to the IBM Cloud Cost Estimator for VPC pricing. Filename: VPC_Calculator_<ProjectName>_<date>.xlsx." />
+                  <span style={{ fontSize: '0.75rem', color: '#0043ce', display: 'block', width: '100%', marginTop: '0.1rem' }}>
+                    (IBM Cloud Cost Estimator — region: <strong>{project?.vpc_region ?? 'us-south'}</strong> / zone: <strong>{project?.vpc_datacenter ?? 'us-south-1'}</strong>)
+                  </span>
+                </div>
+                <p className="export-card-desc">
+                  3-sheet workbook for the IBM Cloud Cost Estimator. Profiles your <strong>{x86Count} x86 servers</strong> onto IBM VPC flex instances with data volumes. Includes an Exceptions sheet for unmatched profiles.
+                </p>
+                {vpcLoading ? (
+                  <InlineLoading description="Generating…" />
+                ) : (
+                  <Button renderIcon={vpcDone ? Checkmark : DocumentDownload} kind={vpcDone ? 'ghost' : 'primary'} onClick={handleVPCCalculator} size="md">
+                    {vpcDone ? 'Downloaded ✓' : 'Download VPC Calculator export'}
+                  </Button>
+                )}
+              </div>
 
               {/* Card 1: Cool Tool Export (4-sheet — the input IBM Cool actually reads) */}
               <div className="export-card">
