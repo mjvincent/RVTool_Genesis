@@ -65,8 +65,82 @@ class AssumptionsExportListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helpers — shared by all export endpoints
+# ---------------------------------------------------------------------------
+
+async def _fetch_enriched_records(project_id: uuid.UUID, db: AsyncSession) -> list[dict]:
+    """Fetch complete ServerRecords and return enriched dicts for the generator.
+
+    Returns list of {"normalized_data": ..., "server_type": ..., "is_excluded": bool}.
+    """
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.normalized_data.is_not(None),
+        )
+    )
+    records = result.scalars().all()
+    return [
+        {
+            "normalized_data": r.normalized_data,
+            "server_type": r.server_type or "vm",
+            "is_excluded": r.is_excluded,
+            "exclusion_reason": r.exclusion_reason,
+            "updated_at": r.updated_at,
+        }
+        for r in records
+        if r.normalized_data
+    ]
+
+
+async def _fetch_excluded_servers(project_id: uuid.UUID, db: AsyncSession) -> list[dict]:
+    """Fetch excluded server records for the Excluded Servers audit sheet."""
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.is_excluded.is_(True),
+        )
+    )
+    excluded = result.scalars().all()
+    out = []
+    for r in excluded:
+        nd = r.normalized_data or {}
+        vinfo = nd.get("vinfo") or {}
+        out.append({
+            "vm_name": vinfo.get("vm_name") or str(r.id),
+            "os_config": vinfo.get("os_config"),
+            "server_type": r.server_type,
+            "exclusion_reason": r.exclusion_reason,
+            "excluded_at": r.updated_at,
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # RVTools export endpoints
 # ---------------------------------------------------------------------------
+
+@router.get(
+    "/projects/{project_id}/powervs-count",
+)
+async def get_powervs_count(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return count of PowerVS records in this project (for Export page conditional rendering)."""
+    await _get_project_or_404(db, project_id)
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.server_type == "powervs",
+            ServerRecord.is_excluded.is_(False),
+        )
+    )
+    count = len(result.scalars().all())
+    return {"powervs_count": count}
+
 
 @router.post(
     "/projects/{project_id}/export/rvtools",
@@ -77,40 +151,33 @@ async def generate_rvtools_export(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> RVToolsExportResponse:
-    """Generate a new RVTools .xlsx export for the project."""
+    """Generate x86/VPC RVTools .xlsx (excludes PowerVS and excluded servers)."""
     project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
 
-    # Fetch all complete server records with normalized data
-    result = await db.execute(
-        select(ServerRecord).where(
-            ServerRecord.project_id == project_id,
-            ServerRecord.processing_status == "complete",
-            ServerRecord.normalized_data.is_not(None),
-        )
-    )
-    records = result.scalars().all()
-
-    if not records:
+    if not enriched:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No complete normalized records found for this project. "
                    "Run processing first.",
         )
 
-    normalized_list = [r.normalized_data for r in records if r.normalized_data]
-
     file_bytes = rvtools_generator.generate_rvtools_xlsx(
-        normalized_list, project.name
+        enriched, project.name, x86_only=True
+    )
+    active_count = sum(
+        1 for r in enriched
+        if not r["is_excluded"] and r["server_type"] != "powervs"
     )
 
     safe_name = project.name.replace(" ", "_")
-    filename = f"RVTools_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"RVTools_x86_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = RVToolsExport(
         project_id=project_id,
         file_data=file_bytes,
         filename=filename,
-        record_count=len(normalized_list),
+        record_count=active_count,
         status="complete",
     )
     db.add(export)
@@ -118,8 +185,56 @@ async def generate_rvtools_export(
     await db.refresh(export)
 
     logger.info(
-        "RVTools export %s generated for project %s (%d records)",
-        export.id, project_id, len(normalized_list),
+        "RVTools x86 export %s generated for project %s (%d records)",
+        export.id, project_id, active_count,
+    )
+    return RVToolsExportResponse.model_validate(export)
+
+
+@router.post(
+    "/projects/{project_id}/export/rvtools-powervs",
+    response_model=RVToolsExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_rvtools_powervs_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RVToolsExportResponse:
+    """Generate PowerVS-only Cool Tool .xlsx (4-sheet, AIX/IBM i records only).
+
+    Uses the 4-sheet format because IBM Cool reads the 4-sheet RVTools format as input.
+    """
+    project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
+
+    powervs_records = [r for r in enriched if r["server_type"] == "powervs" and not r["is_excluded"]]
+    if not powervs_records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PowerVS (AIX/IBM i) records found in this project.",
+        )
+
+    # 4-sheet format — the format IBM Cool reads as input
+    pvs_normalized = [r["normalized_data"] for r in powervs_records if r["normalized_data"]]
+    file_bytes = generate_rvtools_pure_xlsx(pvs_normalized, project.name)
+
+    safe_name = project.name.replace(" ", "_")
+    filename = f"COOL_PowerVS_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    export = RVToolsExport(
+        project_id=project_id,
+        file_data=file_bytes,
+        filename=filename,
+        record_count=len(powervs_records),
+        status="complete",
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+
+    logger.info(
+        "RVTools PowerVS export %s generated for project %s (%d records)",
+        export.id, project_id, len(powervs_records),
     )
     return RVToolsExportResponse.model_validate(export)
 
@@ -194,39 +309,30 @@ async def generate_rvtools_pure_export(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> RVToolsExportResponse:
-    """Generate a standard 4-sheet RVTools .xlsx (vInfo/vNetwork/vPartition/vHost).
-
-    Use this for tools that consume a plain RVTools export.
-    For IBM Cool / VCF Migration Lite use POST /export/rvtools instead.
-    """
+    """Generate x86-only 4-sheet RVTools .xlsx (excludes PowerVS and excluded servers)."""
     project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
 
-    result = await db.execute(
-        select(ServerRecord).where(
-            ServerRecord.project_id == project_id,
-            ServerRecord.processing_status == "complete",
-            ServerRecord.normalized_data.is_not(None),
-        )
-    )
-    records = result.scalars().all()
-
-    if not records:
+    if not enriched:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No complete normalized records found. Run processing first.",
         )
 
-    normalized_list = [r.normalized_data for r in records if r.normalized_data]
-    file_bytes = generate_rvtools_pure_xlsx(normalized_list, project.name)
-
+    # Extract x86-only normalized_data for the pure generator
+    x86_normalized = [
+        r["normalized_data"] for r in enriched
+        if not r["is_excluded"] and r["server_type"] != "powervs"
+    ]
+    file_bytes = generate_rvtools_pure_xlsx(x86_normalized, project.name)
     safe_name = project.name.replace(" ", "_")
-    filename = f"RVToolsPure_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"COOL_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = RVToolsExport(
         project_id=project_id,
         file_data=file_bytes,
         filename=filename,
-        record_count=len(normalized_list),
+        record_count=len(x86_normalized),
         status="complete",
     )
     db.add(export)
@@ -234,8 +340,8 @@ async def generate_rvtools_pure_export(
     await db.refresh(export)
 
     logger.info(
-        "RVTools Pure export %s generated for project %s (%d records)",
-        export.id, project_id, len(normalized_list),
+        "RVTools Pure x86 export %s generated for project %s (%d records)",
+        export.id, project_id, len(x86_normalized),
     )
     return RVToolsExportResponse.model_validate(export)
 
@@ -243,6 +349,39 @@ async def generate_rvtools_pure_export(
 # ---------------------------------------------------------------------------
 # Assumptions export endpoints
 # ---------------------------------------------------------------------------
+
+async def _build_assumptions_list(
+    project_id: uuid.UUID,
+    db: AsyncSession,
+    powervs_only: bool = False,
+) -> list[dict]:
+    """Shared helper: build assumptions list, optionally filtered to PowerVS records."""
+    result = await db.execute(
+        select(Assumption, ServerRecord.normalized_data, ServerRecord.server_type)
+        .join(ServerRecord, Assumption.server_record_id == ServerRecord.id, isouter=True)
+        .where(Assumption.project_id == project_id)
+        .order_by(Assumption.created_at)
+    )
+    rows = result.all()
+    assumptions_list: list[dict] = []
+    for assumption, normalized_data, server_type in rows:
+        if powervs_only and server_type != "powervs":
+            continue
+        vm_name: str | None = None
+        if normalized_data and isinstance(normalized_data, dict):
+            vinfo = normalized_data.get("vinfo") or {}
+            vm_name = vinfo.get("vm_name")
+        assumptions_list.append({
+            "vm_name": vm_name or str(assumption.server_record_id),
+            "field_name": assumption.field_name,
+            "assumed_value": assumption.assumed_value,
+            "original_value": assumption.original_value,
+            "reasoning": assumption.reasoning,
+            "confidence": assumption.confidence,
+            "created_at": assumption.created_at,
+        })
+    return assumptions_list
+
 
 @router.post(
     "/projects/{project_id}/export/assumptions",
@@ -253,54 +392,23 @@ async def generate_assumptions_export(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> AssumptionsExportResponse:
-    """Generate a new Assumptions Report .xlsx export for the project."""
+    """Generate Assumptions Report with all x86 records + Excluded Servers sheet."""
     project = await _get_project_or_404(db, project_id)
+    assumptions_list = await _build_assumptions_list(project_id, db, powervs_only=False)
 
-    # Fetch all assumptions for this project, joining server_record for vm_name
-    result = await db.execute(
-        select(Assumption, ServerRecord.normalized_data)
-        .join(
-            ServerRecord,
-            Assumption.server_record_id == ServerRecord.id,
-            isouter=True,
-        )
-        .where(Assumption.project_id == project_id)
-        .order_by(Assumption.created_at)
-    )
-    rows = result.all()
-
-    if not rows:
+    if not assumptions_list:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No assumptions found for this project.",
         )
 
-    assumptions_list: list[dict] = []
-    for assumption, normalized_data in rows:
-        # Extract vm_name from the linked server record's normalized_data
-        vm_name: str | None = None
-        if normalized_data and isinstance(normalized_data, dict):
-            vinfo = normalized_data.get("vinfo") or {}
-            vm_name = vinfo.get("vm_name")
-
-        assumptions_list.append({
-            "vm_name": vm_name or str(assumption.server_record_id),
-            "field_name": assumption.field_name,
-            "assumed_value": assumption.assumed_value,
-            "original_value": assumption.original_value,
-            "reasoning": assumption.reasoning,
-            "confidence": assumption.confidence,
-            "created_at": assumption.created_at,
-        })
-
+    excluded_servers = await _fetch_excluded_servers(project_id, db)
     file_bytes = assumptions_generator.generate_assumptions_xlsx(
-        assumptions_list, project.name
+        assumptions_list, project.name, excluded_servers=excluded_servers
     )
 
     safe_name = project.name.replace(" ", "_")
-    filename = (
-        f"Assumptions_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    )
+    filename = f"Assumptions_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = AssumptionsExport(
         project_id=project_id,
@@ -314,6 +422,49 @@ async def generate_assumptions_export(
 
     logger.info(
         "Assumptions export %s generated for project %s (%d assumptions)",
+        export.id, project_id, len(assumptions_list),
+    )
+    return AssumptionsExportResponse.model_validate(export)
+
+
+@router.post(
+    "/projects/{project_id}/export/assumptions-powervs",
+    response_model=AssumptionsExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_assumptions_powervs_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> AssumptionsExportResponse:
+    """Generate PowerVS-only Assumptions Report."""
+    project = await _get_project_or_404(db, project_id)
+    assumptions_list = await _build_assumptions_list(project_id, db, powervs_only=True)
+
+    if not assumptions_list:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PowerVS assumptions found for this project.",
+        )
+
+    file_bytes = assumptions_generator.generate_assumptions_xlsx(
+        assumptions_list, project.name, powervs_only=True
+    )
+
+    safe_name = project.name.replace(" ", "_")
+    filename = f"Assumptions_PowerVS_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    export = AssumptionsExport(
+        project_id=project_id,
+        file_data=file_bytes,
+        filename=filename,
+        assumption_count=len(assumptions_list),
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+
+    logger.info(
+        "PowerVS Assumptions export %s generated for project %s (%d assumptions)",
         export.id, project_id, len(assumptions_list),
     )
     return AssumptionsExportResponse.model_validate(export)
