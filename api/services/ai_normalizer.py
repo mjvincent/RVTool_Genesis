@@ -92,29 +92,37 @@ _SYSTEM_PROMPT = (
     "Convert this server row to IBM RVTools JSON. "
     "Return ONLY valid JSON starting with { and ending with }. "
     "No markdown, no text outside the JSON.\n\n"
+    "CRITICAL RULES:\n"
+    "1. vm_name = the server/hostname from the data. NEVER append -host.customer.com to vm_name.\n"
+    "2. memory_mb = RAM in megabytes as an INTEGER. If the source value is in GB, multiply by 1024. Example: 64 GB = 65536 MB.\n"
+    "3. template = the string \"FALSE\" (not a boolean).\n"
+    "4. connected/starts_connected/direct_path_io/srm_placeholder = the string \"True\" or \"False\" (not booleans).\n"
+    "5. nics = integer count of network adapters, default 1 if unknown.\n"
+    "6. disks = integer count of disks, default 1 if unknown.\n"
+    "7. os_vmware_tools = same full OS string as os_config (e.g. 'Microsoft Windows Server 2019 (64-bit)'), NOT 'toolsOk'.\n"
+    "8. capacity_mb and consumed_mb = integers in MB. If source is GB, multiply by 1024.\n\n"
     "Required fields:\n"
     '{"server_type":"vm|bare_metal",'
-    '"vinfo":{"vm_name":str,"powerstate":"poweredOn|poweredOff","template":"False",'
-    '"cpus":int,"memory_mb":int(MB),"nics":int,"disks":int,'
-    '"provisioned_mb":int(MB),"in_use_mb":int(MB,default provisioned*0.6),'
-    '"datacenter":str(default Datacenter1),"cluster":str(default Cluster1),'
-    '"host":str(vm_name+\"-host.customer.com\"),'
-    '"os_config":str(full OS name e.g. Red Hat Enterprise Linux 8 (64-bit)),'
-    '"os_vmware_tools":"toolsOk|toolsNotInstalled"},'
-    '"vnetwork":[{"vm_name":str,"powerstate":"poweredOn","template":"False",'
+    '"vinfo":{"vm_name":str,"powerstate":"poweredOn|poweredOff","template":"FALSE",'
+    '"cpus":int,"memory_mb":int(RAM in MB - multiply GB by 1024),"nics":int(default 1),"disks":int(default 1),'
+    '"provisioned_mb":int(total disk MB),"in_use_mb":int(default provisioned_mb*0.6),'
+    '"datacenter":str(default "Datacenter1"),"cluster":str(default "Cluster1"),'
+    '"host":str(vm_name+"-host.customer.com"),'
+    '"os_config":str(full OS name e.g. "Microsoft Windows Server 2019 (64-bit)"),'
+    '"os_vmware_tools":str(same full OS name as os_config)},'
+    '"vnetwork":[{"vm_name":str,"powerstate":"poweredOn","template":"FALSE",'
     '"srm_placeholder":"False","nic_label":"Network adapter 1",'
-    '"adapter":"Vmxnet3|E1000e","network":"VM Network","switch":"vSwitch0",'
+    '"adapter":"Vmxnet3","network":"VM Network","switch":"vSwitch0",'
     '"connected":"True","starts_connected":"True","mac_address":"00:50:56:00:00:01",'
-    '"type":"VirtualVmxnet3|VirtualE1000e","ipv4_address":str(or 10.0.1.2),'
+    '"type":"VirtualVmxnet3","ipv4_address":str(or "10.0.1.2"),'
     '"ipv6_address":"","direct_path_io":"False","internal_sort_column":0,"annotation":""}],'
-    '"vpartition":[{"vm_name":str,"powerstate":"poweredOn","template":"False",'
-    '"disk_label":"C:\\\\|/","capacity_mb":int,"consumed_mb":int(default cap*0.6),'
-    '"free_mb":int(cap-consumed),"free_pct":float(free/cap*100),'
+    '"vpartition":[{"vm_name":str,"powerstate":"poweredOn","template":"FALSE",'
+    '"disk_label":"C:\\\\ for Windows or / for Linux","capacity_mb":int(disk size in MB),'
+    '"consumed_mb":int(default capacity_mb*0.6),'
+    '"free_mb":int(capacity_mb-consumed_mb),"free_pct":float(free_mb/capacity_mb*100),'
     '"datacenter":str,"cluster":str,"host":str,"os_config":str,"os_vmware_tools":str}],'
     '"assumptions":[]}'
-    "\n\nRules: memory/disk in MB ints. GB*1024=MB. "
-    "Multiple disks=multiple vpartition entries. "
-    "Windows disk_label=C:\\\\ Linux=/\n\n"
+    "\n\nRemember: ALL memory and disk values MUST be integers in MB. GB * 1024 = MB.\n\n"
 )
 
 
@@ -357,8 +365,21 @@ def _clamp_mb(value: object, label: str, assumptions_out: list[dict], max_mb: in
     return max(v, 0)
 
 
+# Threshold below which a memory value is assumed to be in GB (not MB) and needs * 1024
+# A real VM with < 512 MB RAM is essentially impossible in any modern workload.
+_MIN_PLAUSIBLE_RAM_MB = 512
+
+
 def _sanitize_numeric_fields(result: dict) -> dict:
-    """Walk the normalized result and fix impossible numeric values from the LLM.
+    """Walk the normalised result and fix data quality issues from the LLM.
+
+    Enforces:
+    - Memory and disk values are in MB (auto-converts probable GB values)
+    - template field is the string "FALSE" not a Python bool
+    - vm_name does not contain the host suffix
+    - nics / disks default to 1 when null
+    - os_vmware_tools mirrors os_config (never a status string like 'toolsOk')
+    - Numeric sanity caps
 
     Mutates result in-place and returns it.
     Appends corrective assumptions for every value changed.
@@ -368,9 +389,62 @@ def _sanitize_numeric_fields(result: dict) -> dict:
     # --- vinfo ---
     vinfo = result.get("vinfo") or {}
     if vinfo:
-        vinfo["memory_mb"]       = _clamp_mb(vinfo.get("memory_mb", 0),       "vinfo/memory_mb",       new_assumptions, _MAX_RAM_MB)
+        # Fix 1: vm_name must not contain the host suffix the LLM sometimes copies
+        raw_vm_name = str(vinfo.get("vm_name") or "unknown")
+        if raw_vm_name.endswith("-host.customer.com"):
+            fixed_name = raw_vm_name[: -len("-host.customer.com")]
+            vinfo["vm_name"] = fixed_name
+            new_assumptions.append({
+                "field_name": "vinfo/vm_name",
+                "assumed_value": fixed_name,
+                "original_value": raw_vm_name,
+                "reasoning": "LLM appended host suffix to vm_name; stripped to get server name.",
+                "confidence": "medium",
+            })
+
+        # Fix 2: template must be the string "FALSE" not a Python/JSON bool
+        if vinfo.get("template") is not True:   # True would mean it's a template — keep that
+            vinfo["template"] = "FALSE"
+
+        # Fix 3: memory — auto-detect if LLM returned GB instead of MB
+        raw_mem = vinfo.get("memory_mb", 0)
+        try:
+            mem_val = int(float(raw_mem))
+        except (TypeError, ValueError):
+            mem_val = 0
+        if 0 < mem_val < _MIN_PLAUSIBLE_RAM_MB:
+            # Almost certainly in GB — convert
+            corrected = mem_val * 1024
+            new_assumptions.append({
+                "field_name": "vinfo/memory_mb",
+                "assumed_value": str(corrected),
+                "original_value": str(mem_val),
+                "reasoning": (
+                    f"LLM returned memory_mb={mem_val} which is below the plausible minimum "
+                    f"of {_MIN_PLAUSIBLE_RAM_MB} MB. Value treated as GB and converted to "
+                    f"{corrected} MB."
+                ),
+                "confidence": "medium",
+            })
+            mem_val = corrected
+        vinfo["memory_mb"] = _clamp_mb(mem_val, "vinfo/memory_mb", new_assumptions, _MAX_RAM_MB)
+
         vinfo["provisioned_mb"]  = _clamp_mb(vinfo.get("provisioned_mb", 0),  "vinfo/provisioned_mb",  new_assumptions, _MAX_DISK_MB)
         vinfo["in_use_mb"]       = _clamp_mb(vinfo.get("in_use_mb", 0),       "vinfo/in_use_mb",       new_assumptions, _MAX_DISK_MB)
+
+        # Fix 4: nics and disks must be non-null integers >= 1
+        try:
+            nics = int(vinfo.get("nics") or 1)
+            vinfo["nics"] = max(nics, 1)
+        except (TypeError, ValueError):
+            vinfo["nics"] = 1
+        try:
+            disks_val = vinfo.get("disks")
+            disks = int(float(disks_val)) if disks_val is not None else 1
+            vinfo["disks"] = max(disks, 1)
+        except (TypeError, ValueError):
+            vinfo["disks"] = 1
+
         try:
             cpus = int(vinfo.get("cpus", 1))
             if cpus > _MAX_CPUS:
@@ -390,7 +464,7 @@ def _sanitize_numeric_fields(result: dict) -> dict:
         if vinfo["in_use_mb"] > vinfo["provisioned_mb"] and vinfo["provisioned_mb"] > 0:
             vinfo["in_use_mb"] = vinfo["provisioned_mb"]
 
-        # Normalize OS names to IBM-standard strings
+        # Fix 5: Normalize OS names to IBM-standard strings
         raw_os = vinfo.get("os_config") or ""
         normalized_os, os_changed = _normalize_os_name(raw_os)
         if os_changed:
@@ -405,22 +479,42 @@ def _sanitize_numeric_fields(result: dict) -> dict:
                 ),
                 "confidence": "high",
             })
-        # Mirror normalization to os_vmware_tools if it was also set to a raw string
-        raw_tools_os = vinfo.get("os_vmware_tools") or ""
-        norm_tools_os, tools_changed = _normalize_os_name(raw_tools_os)
-        if tools_changed:
-            vinfo["os_vmware_tools"] = norm_tools_os
+
+        # Fix 6: os_vmware_tools must mirror os_config — NEVER be a status string
+        _TOOLS_STATUS_STRINGS = {
+            "toolsok", "toolsnotinstalled", "toolsold", "toolsnotrunning",
+            "guesttoolsnotinstalled", "guesttoolsnotrunning",
+        }
+        raw_tools_os = str(vinfo.get("os_vmware_tools") or "")
+        if raw_tools_os.lower().strip() in _TOOLS_STATUS_STRINGS or not raw_tools_os.strip():
+            # Use the already-normalized os_config value
+            vinfo["os_vmware_tools"] = vinfo.get("os_config") or normalized_os
+        else:
+            norm_tools_os, tools_changed = _normalize_os_name(raw_tools_os)
+            if tools_changed:
+                vinfo["os_vmware_tools"] = norm_tools_os
 
     # --- vpartition ---
+    _MIN_DISK_MB = 10   # anything below 10 MB is almost certainly in GB
     for part in result.get("vpartition") or []:
         if not part:
             continue
-        cap  = _clamp_mb(part.get("capacity_mb", 0),  "vpartition/capacity_mb",  new_assumptions, _MAX_DISK_MB)
-        cons = _clamp_mb(part.get("consumed_mb", 0),  "vpartition/consumed_mb",  new_assumptions, _MAX_DISK_MB)
+        # Auto-convert disk values that look like GB
+        raw_cap = part.get("capacity_mb", 0)
+        try:
+            cap_val = int(float(raw_cap))
+        except (TypeError, ValueError):
+            cap_val = 0
+        if 0 < cap_val < _MIN_DISK_MB:
+            cap_val = cap_val * 1024
+        cap  = _clamp_mb(cap_val,                      "vpartition/capacity_mb",  new_assumptions, _MAX_DISK_MB)
+        cons = _clamp_mb(part.get("consumed_mb", 0),   "vpartition/consumed_mb",  new_assumptions, _MAX_DISK_MB)
         part["capacity_mb"] = cap
         part["consumed_mb"] = min(cons, cap) if cap > 0 else cons
         part["free_mb"]     = max(cap - part["consumed_mb"], 0)
         part["free_pct"]    = round(part["free_mb"] / cap * 100, 1) if cap > 0 else 0.0
+        # Fix template field in vpartition too
+        part["template"] = "FALSE"
 
     # --- vnetwork — inject gateway/DNS/security-group assumptions for placeholder IPs ---
     vm_name = (result.get("vinfo") or {}).get("vm_name", "unknown")
