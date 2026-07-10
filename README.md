@@ -106,6 +106,9 @@ OrbStack / Docker Compose
 │   ├── /api/process           — AI normalization (background tasks)
 │   ├── /api/export            — RVTools + Assumptions .xlsx generation
 │   ├── /api/settings          — LLM provider settings (GET/POST/test)
+│   ├── /api/projects/{id}/backup  — single-project JSON backup
+│   ├── /api/backup/all            — full system .zip backup
+│   ├── /api/restore               — restore from .json or .zip
 │   │
 │   └── services/
 │       ├── spreadsheet_parser   — pandas: handles any freeform .xlsx/.csv
@@ -306,8 +309,84 @@ the Review table.
 
 ---
 
+## Backup & Restore
+
+Projects can be exported to portable JSON bundles and restored on any machine running
+RVTool Genesis — useful for off-machine backups, sharing with colleagues, and archiving
+completed engagements.
+
+### What's in a backup
+
+| Included | Not Included |
+|---|---|
+| All normalized server records | Generated `.xlsx` exports |
+| All AI assumptions | LLM provider settings / API keys |
+| Server type, exclusion flags + reasons | Nothing sensitive |
+| Project name and description | — |
+| Original spreadsheet *(optional)* | — |
+
+Generated exports are intentionally excluded — they can be regenerated from the Export
+page in seconds.
+
+### Backing up a single project
+
+1. Open the **Projects** page
+2. Click the ⋮ overflow menu on any project row
+3. Select **Backup project**
+4. Optionally check **"Include original spreadsheet file"** (increases file size)
+5. Click **Download backup** → saves `rvtg-<project-name>-<date>.json`
+
+### Backing up all projects
+
+Click the **Backup all** button in the Projects page header. Downloads
+`rvtoolgenesis-backup-<date>.zip` containing one JSON bundle per project.
+
+### Restoring from backup
+
+1. Click **Restore from backup** (ghost button in the Projects page header)
+2. Pick a `.json` (single project) or `.zip` (multi-project) backup file
+3. Restored project(s) appear immediately in the list with a
+   `(restored YYYY-MM-DD)` suffix so they're distinguishable from originals
+4. Navigate straight to **Review → Export** — no re-normalization needed
+
+### Backup bundle format
+
+```json
+{
+  "schema_version": 1,
+  "exported_at": "ISO-8601 timestamp",
+  "project": { "id", "name", "description", "created_at", "updated_at" },
+  "records": [
+    {
+      "id", "raw_data", "normalized_data", "server_type",
+      "processing_status", "is_excluded", "exclusion_reason",
+      "assumptions": [ { "field_name", "assumed_value", "reasoning", "confidence" } ]
+    }
+  ],
+  "original_file": { "filename", "row_count", "data_base64" }
+}
+```
+
+### Docker volume durability
+
+The PostgreSQL data lives in a **named Docker volume** (`postgres_data`) that survives
+container restarts, `docker compose down`, and OrbStack crashes. You do **not** need a
+backup for crash recovery — only use backup/restore for off-machine portability or
+archiving.
+
+---
 
 ## Changelog
+
+### feat/backup-restore
+- **Project backup** — download any project as a portable `.json` bundle (normalized records + assumptions)
+- **Full system backup** — "Backup all" downloads a `.zip` of every project
+- **Restore** — upload a `.json` or `.zip` to recreate projects on any RVTool Genesis instance; no re-normalization needed
+- **Original file option** — optional `include_file` flag embeds the source spreadsheet in the bundle (base64)
+- **`POST /api/restore`** — accepts `.json` and `.zip`, always creates new projects (never overwrites), appends `(restored YYYY-MM-DD)` to names
+- **`GET /api/projects/{id}/backup`** and **`GET /api/backup/all`** — streaming download endpoints
+
+---
 
 ### feat/powervs-exclusion
 - **PowerVS auto-detection** — AIX and IBM i operating systems are automatically designated as `server_type = "powervs"` by both the LLM and Python fallback. Enforced as a guaranteed post-processing step.
