@@ -170,6 +170,23 @@ export const api = {
     getPowerVSCount: (projectId: string): Promise<{ powervs_count: number }> =>
       fetch(`${BASE}/projects/${projectId}/powervs-count`).then(r => r.json()),
   },
+  backup: {
+    downloadProject: (projectId: string, includeFile = false): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/backup?include_file=${includeFile}`),
+    downloadAll: (includeFiles = false): Promise<Response> =>
+      fetch(`${BASE}/backup/all?include_files=${includeFiles}`),
+    restore: (file: File): Promise<{ restored: { id: string; name: string }[]; count: number }> => {
+      const form = new FormData();
+      form.append('file', file);
+      return fetch(`${BASE}/restore`, { method: 'POST', body: form }).then(async r => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: 'Restore failed' }));
+          throw new Error(err.detail || 'Restore failed');
+        }
+        return r.json();
+      });
+    },
+  },
   settings: {
     get: (): Promise<LLMSettingsResponse> =>
       fetch(`${BASE}/settings`).then(r => r.json()),
