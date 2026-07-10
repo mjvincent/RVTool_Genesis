@@ -93,11 +93,17 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }).then(r => r.json()),
   },
   exports: {
+    // Cloud Solutioning Tool export (IBM Cool / VCF Migration Lite) — 22 sheets
     generateRVTools: (projectId: string): Promise<ExportRecord> =>
       fetch(`${BASE}/projects/${projectId}/export/rvtools`, { method: 'POST' }).then(r => r.json()),
     listRVTools: (projectId: string): Promise<ExportRecord[]> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools`).then(r => r.json()),
     downloadRVTools: (projectId: string, exportId: string): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
+    // Pure RVTools export — 4 sheets (vInfo, vNetwork, vPartition, vHost)
+    generateRVToolsPure: (projectId: string): Promise<ExportRecord> =>
+      fetch(`${BASE}/projects/${projectId}/export/rvtools-pure`, { method: 'POST' }).then(r => r.json()),
+    downloadRVToolsPure: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
     generateAssumptions: (projectId: string): Promise<ExportRecord> =>
       fetch(`${BASE}/projects/${projectId}/export/assumptions`, { method: 'POST' }).then(r => r.json()),
