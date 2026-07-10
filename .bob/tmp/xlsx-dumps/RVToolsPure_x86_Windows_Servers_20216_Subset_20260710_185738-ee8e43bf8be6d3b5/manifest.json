@@ -1,0 +1,106 @@
+{
+  "source": "Samples/RVToolsPure_x86_Windows_Servers_20216_Subset_20260710_185738.xlsx",
+  "contentHash": "ee8e43bf8be6d3b5",
+  "sheets": [
+    {
+      "name": "vInfo",
+      "file": "vInfo.json",
+      "rowCount": 100,
+      "headers": [
+        "VM",
+        "Powerstate",
+        "Template",
+        "CPUs",
+        "Memory",
+        "NICs",
+        "Disks",
+        "Provisioned MB",
+        "In Use MB",
+        "Datacenter",
+        "Cluster",
+        "Host",
+        "OS according to the configuration file",
+        "OS according to the VMware Tools"
+      ]
+    },
+    {
+      "name": "vNetwork",
+      "file": "vNetwork.json",
+      "rowCount": 98,
+      "headers": [
+        "VM",
+        "Powerstate",
+        "Template",
+        "SRM Placeholder",
+        "NIC label",
+        "Adapter",
+        "Network",
+        "Switch",
+        "Connected",
+        "Starts Connected",
+        "Mac Address",
+        "Type",
+        "IPv4 Address",
+        "IPv6 Address",
+        "Direct Path IO",
+        "Internal Sort Column",
+        "Annotation"
+      ]
+    },
+    {
+      "name": "vPartition",
+      "file": "vPartition.json",
+      "rowCount": 93,
+      "headers": [
+        "VM",
+        "Powerstate",
+        "Template",
+        "Disk",
+        "Capacity MB",
+        "Consumed MB",
+        "Free MB",
+        "Free % ",
+        "Datacenter",
+        "Cluster",
+        "Host",
+        "OS according to the configuration file",
+        "OS according to the VMware Tools"
+      ]
+    },
+    {
+      "name": "vHost",
+      "file": "vHost.json",
+      "rowCount": 97,
+      "headers": [
+        "Host",
+        "Datacenter",
+        "Cluster",
+        "Config status",
+        "CPU Model",
+        "Speed",
+        "HT Available",
+        "HT Active",
+        "# CPU",
+        "Cores per CPU",
+        "# Cores",
+        "CPU usage %",
+        "# Memory",
+        "Memory usage %",
+        "Console",
+        "# NICs",
+        "# HBAs",
+        "# VMs",
+        "VMs per Core",
+        "# vCPUs",
+        "vCPUs per Core",
+        "vRAM",
+        "VM Used memory",
+        "VM Memory Swapped",
+        "VM Memory Ballooned",
+        "ESX Version",
+        "Vendor",
+        "Model"
+      ]
+    }
+  ]
+}
