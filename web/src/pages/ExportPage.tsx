@@ -76,11 +76,9 @@ export default function ExportPage() {
 
   // x86 exports
   const [vpcLoading, setVpcLoading]     = useState(false);
-  const [coolLoading, setCoolLoading]   = useState(false);
   const [pureLoading, setPureLoading]   = useState(false);
   const [asmLoading, setAsmLoading]     = useState(false);
   const [vpcDone, setVpcDone]           = useState(false);
-  const [coolDone, setCoolDone]         = useState(false);
   const [pureDone, setPureDone]         = useState(false);
   const [asmDone, setAsmDone]           = useState(false);
 
@@ -102,26 +100,15 @@ export default function ExportPage() {
   const x86Count = recordCount - powervsCount;
 
   // ── x86 handlers ──────────────────────────────────────────────────────────
-  async function handleVPCCalculator() {
+  async function handleCloudSolutionExport() {
     setVpcLoading(true); setError('');
     try {
       const exp = await api.exports.generateVPCCalculator(projectId);
       const resp = await api.exports.downloadVPCCalculator(projectId, exp.id);
       await triggerDownload(resp, (exp as any).filename || `VPC_Calculator_${projectId}.xlsx`);
       setVpcDone(true);
-    } catch { setError('Failed to generate IBM VPC Calculator export.'); }
+    } catch { setError('Failed to generate Cloud Solution export.'); }
     finally { setVpcLoading(false); }
-  }
-
-  async function handleCoolExport() {
-    setCoolLoading(true); setError('');
-    try {
-      const exp = await api.exports.generateRVTools(projectId);
-      const resp = await api.exports.downloadRVTools(projectId, exp.id);
-      await triggerDownload(resp, (exp as any).filename || `RVTools_x86_${projectId}.xlsx`);
-      setCoolDone(true);
-    } catch { setError('Failed to generate x86 Cloud Solutioning Tool export.'); }
-    finally { setCoolLoading(false); }
   }
 
   async function handlePureExport() {
@@ -223,14 +210,14 @@ export default function ExportPage() {
                 ({x86Count} server{x86Count !== 1 ? 's' : ''})
               </span>
             </h2>
-            <div className="export-card-row" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr', marginBottom: '2.5rem' }}>
+            <div className="export-card-row" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginBottom: '2.5rem' }}>
 
-              {/* Card 0: VPC Calculator Export — PRIMARY, direct IBM Cost Estimator upload */}
+              {/* Card 0: Cloud Solution Export — PRIMARY, direct IBM Cloud Cost Estimator upload */}
               <div className="export-card" style={{ borderTop: '3px solid #0f62fe' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <DocumentDownload size={20} style={{ color: '#0f62fe', flexShrink: 0 }} />
-                  <span className="export-card-title">VPC Calculator Export</span>
-                  <InfoTooltip text="3-sheet IBM Cloud VPC Calculator workbook (Project Settings, Exceptions, Data Domains) — equivalent to the output of rvtools2vpc.vmware-solutions.cloud.ibm.com. Upload directly to the IBM Cloud Cost Estimator for VPC pricing. Filename: VPC_Calculator_<ProjectName>_<date>.xlsx." />
+                  <span className="export-card-title">Cloud Solution Export</span>
+                  <InfoTooltip text="3-sheet IBM Cloud VPC Calculator workbook (Project Settings, Exceptions, Data Domains). Upload directly to the IBM Cloud Cost Estimator for VPC pricing. Equivalent to the output of rvtools2vpc.vmware-solutions.cloud.ibm.com. Filename: VPC_Calculator_<ProjectName>_<date>.xlsx." />
                   <span style={{ fontSize: '0.75rem', color: '#0043ce', display: 'block', width: '100%', marginTop: '0.1rem' }}>
                     (IBM Cloud Cost Estimator — region: <strong>{project?.vpc_region ?? 'us-south'}</strong> / zone: <strong>{project?.vpc_datacenter ?? 'us-south-1'}</strong>)
                   </span>
@@ -241,33 +228,13 @@ export default function ExportPage() {
                 {vpcLoading ? (
                   <InlineLoading description="Generating…" />
                 ) : (
-                  <Button renderIcon={vpcDone ? Checkmark : DocumentDownload} kind={vpcDone ? 'ghost' : 'primary'} onClick={handleVPCCalculator} size="md">
-                    {vpcDone ? 'Downloaded ✓' : 'Download VPC Calculator export'}
+                  <Button renderIcon={vpcDone ? Checkmark : DocumentDownload} kind={vpcDone ? 'ghost' : 'primary'} onClick={handleCloudSolutionExport} size="md">
+                    {vpcDone ? 'Downloaded ✓' : 'Download Cloud Solution export'}
                   </Button>
                 )}
               </div>
 
-              {/* Card 1: Cool Tool Export (4-sheet — the input IBM Cool actually reads) */}
-              <div className="export-card">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <DocumentDownload size={20} style={{ color: '#0f62fe', flexShrink: 0 }} />
-                  <span className="export-card-title">Cool Tool Export</span>
-                  <InfoTooltip text="4-sheet RVTools workbook (vInfo, vNetwork, vPartition, vHost) — the format IBM Cool reads as input. Upload this file directly to the IBM Cloud Solutioning Tool to generate VPC pricing. File is named COOL_<ProjectName>_<date>.xlsx." />
-                  <span style={{ fontSize: '0.75rem', color: '#525252', display: 'block', width: '100%', marginTop: '0.1rem' }}>(IBM Cool input — COOL_ProjectName_date.xlsx)</span>
-                </div>
-                <p className="export-card-desc">
-                  4-sheet workbook for the IBM Cloud Solutioning Tool (IBM Cool). Contains <strong>{x86Count} x86 records</strong>. Upload this file to IBM Cool to generate VPC pricing.
-                </p>
-                {pureLoading ? (
-                  <InlineLoading description="Generating…" />
-                ) : (
-                  <Button renderIcon={pureDone ? Checkmark : DocumentDownload} kind={pureDone ? 'ghost' : 'primary'} onClick={handlePureExport} size="md">
-                    {pureDone ? 'Downloaded ✓' : 'Download Cool Tool export'}
-                  </Button>
-                )}
-              </div>
-
-              {/* Card 2: Full RVTools Export (22-sheet — for VCF Migration Lite / advanced tools) */}
+              {/* Card 1: Full RVTools Export (22-sheet — for VCF Migration Lite / advanced tools) */}
               <div className="export-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <DocumentDownload size={20} style={{ color: '#0043ce', flexShrink: 0 }} />
@@ -278,11 +245,11 @@ export default function ExportPage() {
                 <p className="export-card-desc">
                   Full 22-sheet RVTools format for VCF Migration Lite and other tools requiring all RVTools tabs. Contains <strong>{x86Count} records</strong>.
                 </p>
-                {coolLoading ? (
+                {pureLoading ? (
                   <InlineLoading description="Generating…" />
                 ) : (
-                  <Button renderIcon={coolDone ? Checkmark : DocumentDownload} kind={coolDone ? 'ghost' : 'secondary'} onClick={handleCoolExport} size="md">
-                    {coolDone ? 'Downloaded ✓' : 'Download RVTools export'}
+                  <Button renderIcon={pureDone ? Checkmark : DocumentDownload} kind={pureDone ? 'ghost' : 'secondary'} onClick={handlePureExport} size="md">
+                    {pureDone ? 'Downloaded ✓' : 'Download RVTools export'}
                   </Button>
                 )}
               </div>
