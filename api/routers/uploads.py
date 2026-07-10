@@ -210,6 +210,53 @@ async def get_record(
     return ServerRecordResponse.model_validate(record)
 
 
+class ExcludeRecordBody(BaseModel):
+    is_excluded: bool
+    exclusion_reason: str | None = None
+
+
+@router.patch(
+    "/projects/{project_id}/records/{record_id}/exclude",
+    response_model=ServerRecordResponse,
+)
+async def exclude_record(
+    project_id: uuid.UUID,
+    record_id: uuid.UUID,
+    body: ExcludeRecordBody,
+    db: AsyncSession = Depends(get_db),
+) -> ServerRecordResponse:
+    """Toggle exclusion on a server record and optionally set the reason.
+
+    Excluded records are omitted from all RVTools exports.
+    They still appear in the Assumptions Report's 'Excluded Servers' sheet.
+    """
+    await _get_project_or_404(db, project_id)
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.id == record_id,
+            ServerRecord.project_id == project_id,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Record {record_id} not found")
+
+    record.is_excluded = body.is_excluded
+    # Clear reason when un-excluding; preserve when excluding
+    if not body.is_excluded:
+        record.exclusion_reason = None
+    elif body.exclusion_reason is not None:
+        record.exclusion_reason = body.exclusion_reason
+
+    await db.commit()
+    await db.refresh(record)
+    logger.info(
+        "Record %s exclusion set to %s (reason: %s)",
+        record_id, body.is_excluded, body.exclusion_reason,
+    )
+    return ServerRecordResponse.model_validate(record)
+
+
 @router.patch(
     "/projects/{project_id}/records/{record_id}",
     response_model=ServerRecordResponse,

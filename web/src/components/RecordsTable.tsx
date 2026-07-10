@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   DataTable, DataTableSkeleton, Table, TableHead, TableRow, TableHeader,
   TableBody, TableCell, TableContainer, TableToolbar, TableToolbarContent,
   TableToolbarSearch, TableExpandRow, TableExpandedRow, TableExpandHeader,
-  Tag, Pagination, Button, InlineLoading, InlineNotification,
+  Tag, Pagination, Button, InlineLoading, InlineNotification, Checkbox, TextInput,
 } from '@carbon/react';
 import { Renew, WarningAlt, Edit } from '@carbon/icons-react';
 import { api, ServerRecord, Assumption } from '../api/client';
@@ -21,7 +21,8 @@ const headers = [
   { key: 'memory_gb',   header: 'RAM (GB)' },
   { key: 'storage_gb',  header: 'Storage (GB)' },
   { key: 'os',          header: 'Operating System' },
-  { key: 'status_col',  header: 'Status' },
+  { key: 'exclude_col', header: 'Exclude' },
+  { key: 'status_col',  header: 'AI Decisions' },
 ];
 
 function safeGet(obj: any, ...paths: string[]): any {
@@ -38,6 +39,16 @@ function mbToGb(mb: any): string {
   return n >= 1024 ? (n / 1024).toFixed(0) : (n / 1024).toFixed(1);
 }
 
+function typeTag(serverType: string | null | undefined) {
+  if (!serverType || serverType === 'vm')
+    return <Tag type="blue" size="sm">Virtual</Tag>;
+  if (serverType === 'bare_metal')
+    return <Tag type="teal" size="sm">Bare Metal</Tag>;
+  if (serverType === 'powervs')
+    return <Tag type="purple" size="sm">PowerVS</Tag>;
+  return <Tag type="gray" size="sm">{serverType}</Tag>;
+}
+
 export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
   const [records, setRecords] = useState<ServerRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +58,9 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
   const [retrying, setRetrying] = useState<Set<string>>(new Set());
   const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
   const [editTarget, setEditTarget] = useState<ServerRecord | null>(null);
+  // exclusion reason drafts — keyed by record id
+  const [reasonDraft, setReasonDraft] = useState<Record<string, string>>({});
+  const [excludeLoading, setExcludeLoading] = useState<Set<string>>(new Set());
 
   const loadRecords = useCallback(async () => {
     try {
@@ -67,13 +81,29 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
       if (result.processing_status === 'error') {
         setRetryErrors(prev => ({ ...prev, [recordId]: result.error_message ?? 'Processing failed' }));
       }
-      // Reload records to get updated data
       await loadRecords();
     } catch {
       setRetryErrors(prev => ({ ...prev, [recordId]: 'Retry request failed' }));
     } finally {
       setRetrying(prev => { const n = new Set(prev); n.delete(recordId); return n; });
     }
+  }
+
+  async function handleExclude(recordId: string, isExcluded: boolean, reason?: string | null) {
+    setExcludeLoading(prev => new Set(prev).add(recordId));
+    try {
+      const updated = await api.uploads.excludeRecord(projectId, recordId, isExcluded, reason);
+      setRecords(prev => prev.map(r => r.id === updated.id ? updated : r));
+    } catch (e) {
+      console.error('Failed to update exclusion', e);
+    } finally {
+      setExcludeLoading(prev => { const n = new Set(prev); n.delete(recordId); return n; });
+    }
+  }
+
+  async function handleReasonSave(recordId: string, isExcluded: boolean) {
+    const reason = reasonDraft[recordId] ?? '';
+    await handleExclude(recordId, isExcluded, reason || null);
   }
 
   // Show both complete AND error records
@@ -97,7 +127,7 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
     const nd = r.normalized_data ?? {};
     const rawName = safeGet(r.raw_data, 'name', 'Server Name', 'VM', 'vm_name', 'hostname') ?? r.id;
     const vmName  = safeGet(nd, 'vinfo.vm_name') ?? rawName;
-    const type    = safeGet(nd, 'server_type') ?? 'vm';
+    const type    = r.server_type ?? safeGet(nd, 'server_type') ?? 'vm';
     const cpus    = safeGet(nd, 'vinfo.cpus', 'vinfo.cpu_count');
     const memMb   = safeGet(nd, 'vinfo.memory_mb');
     const diskMb  = safeGet(nd, 'vinfo.provisioned_mb');
@@ -112,16 +142,19 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
       memory_gb:   mbToGb(memMb),
       storage_gb:  mbToGb(diskMb),
       os:          String(os).replace(/ \(64-bit\)/i, ''),
+      exclude_col: r.is_excluded ? 'excluded' : 'active',
       status_col:  isFailed ? 'error' : asmCount,
       _record:     r,
       _isFailed:   isFailed,
     };
   });
 
-  if (loading) return <DataTableSkeleton columnCount={7} rowCount={8} />;
+  if (loading) return <DataTableSkeleton columnCount={8} rowCount={8} />;
   if (visibleRecords.length === 0) return null;
 
   const failedCount = visibleRecords.filter(r => r.processing_status === 'error' || r.status === 'error').length;
+  const powervsCount = visibleRecords.filter(r => (r.server_type ?? safeGet(r.normalized_data, 'server_type')) === 'powervs').length;
+  const excludedCount = visibleRecords.filter(r => r.is_excluded).length;
 
   return (
     <>
@@ -133,6 +166,24 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
           lowContrast
           style={{ marginBottom: '1rem' }}
         />
+      )}
+
+      {/* Summary bar — PowerVS + Excluded counts */}
+      {(powervsCount > 0 || excludedCount > 0) && (
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          {powervsCount > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', color: '#6929c4' }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#6929c4', display: 'inline-block' }} />
+              <strong>{powervsCount}</strong> PowerVS (AIX/IBM i) — will export separately
+            </span>
+          )}
+          {excludedCount > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', color: '#6f6f6f' }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#8d8d8d', display: 'inline-block' }} />
+              <strong>{excludedCount}</strong> excluded from exports
+            </span>
+          )}
+        </div>
       )}
 
       <DataTable rows={rows} headers={headers} isSortable>
@@ -170,15 +221,24 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                   const isFailed = (original?.processing_status === 'error' || original?.status === 'error');
                   const isRetrying = retrying.has(row.id);
                   const retryError = retryErrors[row.id];
+                  const isExcluded = original?.is_excluded ?? false;
+                  const currentReason = reasonDraft[row.id] ?? (original?.exclusion_reason ?? '');
+                  const serverType = original?.server_type ?? safeGet(nd, 'server_type') ?? 'vm';
+                  const isExcluding = excludeLoading.has(row.id);
+
+                  const rowStyle: React.CSSProperties = isExcluded
+                    ? { opacity: 0.5 }
+                    : undefined as any;
 
                   return (
                     <>
                       <TableExpandRow
                         {...getRowProps({ row })}
                         key={row.id}
-                        style={isFailed ? { background: '#fff8f8' } : undefined}
+                        style={{ ...(isFailed ? { background: '#fff8f8' } : {}), ...rowStyle }}
                       >
                         {row.cells.map((cell: any) => {
+                          // ── Type column ──────────────────────────────────
                           if (cell.info.header === 'server_type') {
                             if (cell.value === 'error') {
                               return (
@@ -189,12 +249,47 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                             }
                             return (
                               <TableCell key={cell.id}>
-                                <Tag type={cell.value === 'bare_metal' ? 'teal' : 'blue'} size="sm">
-                                  {cell.value === 'bare_metal' ? 'Bare Metal' : 'Virtual'}
-                                </Tag>
+                                {typeTag(serverType)}
                               </TableCell>
                             );
                           }
+
+                          // ── Exclude column ───────────────────────────────
+                          if (cell.info.header === 'exclude_col') {
+                            return (
+                              <TableCell key={cell.id} style={{ verticalAlign: 'middle' }}>
+                                {isExcluding ? (
+                                  <InlineLoading style={{ minHeight: 'unset', height: 20 }} />
+                                ) : (
+                                  <Checkbox
+                                    id={`exclude-${row.id}`}
+                                    labelText=""
+                                    hideLabel
+                                    checked={isExcluded}
+                                    onChange={(_: any, { checked }: { checked: boolean }) => {
+                                      handleExclude(row.id, checked, checked ? (currentReason || null) : null);
+                                    }}
+                                  />
+                                )}
+                              </TableCell>
+                            );
+                          }
+
+                          // ── Server Name column ───────────────────────────
+                          if (cell.info.header === 'vm_name') {
+                            return (
+                              <TableCell key={cell.id}>
+                                <span
+                                  className="vm-name-cell"
+                                  style={isExcluded ? { textDecoration: 'line-through', color: '#8d8d8d' } : undefined}
+                                >
+                                  {cell.value}
+                                </span>
+                              </TableCell>
+                            );
+                          }
+
+                          // ── AI Decisions column ──────────────────────────
                           if (cell.info.header === 'status_col') {
                             if (cell.value === 'error') {
                               return (
@@ -231,18 +326,12 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                               </TableCell>
                             );
                           }
-                          if (cell.info.header === 'vm_name') {
-                            return (
-                              <TableCell key={cell.id}>
-                                <span className="vm-name-cell">{cell.value}</span>
-                              </TableCell>
-                            );
-                          }
+
                           return <TableCell key={cell.id}>{cell.value}</TableCell>;
                         })}
                       </TableExpandRow>
 
-                      {/* Expanded detail / error detail */}
+                      {/* Expanded detail */}
                       <TableExpandedRow colSpan={tableHeaders.length + 1} key={`${row.id}-exp`}>
                         {isFailed ? (
                           <div style={{ padding: '1rem 1.25rem', background: '#fff1f1' }}>
@@ -278,6 +367,27 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                                 </div>
                               ))}
                             </div>
+
+                            {/* Exclusion reason input — visible only when row is excluded */}
+                            {isExcluded && (
+                              <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #e0e0e0', background: '#f9f3ff' }}>
+                                <p style={{ fontSize: '0.8125rem', color: '#6929c4', margin: '0 0 0.5rem', fontWeight: 500 }}>
+                                  This server is excluded from all exports.
+                                </p>
+                                <TextInput
+                                  id={`reason-${row.id}`}
+                                  labelText="Exclusion reason (optional)"
+                                  size="sm"
+                                  value={currentReason}
+                                  placeholder="e.g. Decommissioned, out of scope, migrated already…"
+                                  onChange={(e: any) => setReasonDraft(prev => ({ ...prev, [row.id]: e.target.value }))}
+                                  onBlur={() => handleReasonSave(row.id, true)}
+                                  onKeyDown={(e: any) => { if (e.key === 'Enter') handleReasonSave(row.id, true); }}
+                                  style={{ maxWidth: 480 }}
+                                />
+                              </div>
+                            )}
+
                             <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #e0e0e0' }}>
                               <Button
                                 kind="ghost"

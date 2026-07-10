@@ -223,15 +223,53 @@ def _get(d: dict, key: str, default: Any = None) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
-def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
+def generate_rvtools_xlsx(
+    records: list[dict],
+    project_name: str,
+    powervs_only: bool = False,
+    x86_only: bool = False,
+) -> bytes:
     """Generate a standards-compliant RVTools .xlsx from normalised server records.
 
-    Produces all 22 standard RVTools 4.x sheets.  Sheets for which we have
-    synthesised data (vInfo, vCPU, vMemory, vDisk, vPartition, vNetwork, vHost)
-    are populated.  The remaining sheets are present with correct headers but
-    empty data rows — downstream tools (VCF Migration Lite, IBM Cool) require
-    the sheets to exist for format validation.
+    Produces all 22 standard RVTools 4.x sheets.
+
+    Args:
+        records: list of dicts with keys:
+            ``normalized_data`` (the vinfo/vnetwork/etc dict),
+            ``server_type`` (str),
+            ``is_excluded`` (bool).
+            Also accepts legacy format (plain normalized_data dicts).
+        powervs_only: if True, include only server_type=="powervs" records.
+        x86_only: if True, include only vm/bare_metal records (exclude powervs).
+        Excluded records (is_excluded=True) are always omitted.
     """
+    # Normalise to enriched format — support legacy callers that pass plain dicts
+    enriched: list[dict] = []
+    for r in records:
+        if r is None:
+            continue
+        if "normalized_data" in r:
+            # New enriched format: {"normalized_data": {...}, "server_type": ..., "is_excluded": ...}
+            if r.get("is_excluded"):
+                continue
+            nd = r.get("normalized_data") or {}
+            st = r.get("server_type") or (nd.get("server_type") or "vm")
+        else:
+            # Legacy format: raw normalized_data dict
+            nd = r
+            st = nd.get("server_type") or "vm"
+
+        # Apply powervs / x86 filter
+        is_powervs = (st == "powervs")
+        if powervs_only and not is_powervs:
+            continue
+        if x86_only and is_powervs:
+            continue
+
+        enriched.append(nd)
+
+    records = enriched  # shadow with filtered list
+
     wb = Workbook()
     wb.remove(wb.active)   # remove the default empty sheet
 
@@ -303,7 +341,7 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
 
         # --- vDisk (one row per partition/disk) ---
         for i, part in enumerate(vpartition_list):
-            if part is None:
+            if not isinstance(part, dict):
                 continue
             disk_label   = _get(part, "disk_label") or f"Hard disk {i+1}"
             capacity_mb  = _get(part, "capacity_mb")
@@ -319,7 +357,7 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
 
         # --- vPartition ---
         for part in vpartition_list:
-            if part is None:
+            if not isinstance(part, dict):
                 continue
             sheets["vPartition"].append([
                 vm_name, powerstate, template,
@@ -431,6 +469,149 @@ def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
     # Auto-size columns on all populated sheets
     for sheet_name, headers in ALL_SHEETS:
         _auto_size_columns(sheets[sheet_name], headers)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def generate_rvtools_pure_xlsx(records: list[dict], project_name: str) -> bytes:
+    """Generate a standard 4-sheet RVTools .xlsx from normalised server records.
+
+    Produces exactly the four sheets a native RVTools 4.x export contains:
+    vInfo, vNetwork, vPartition, vHost.
+
+    Use this when the target tool expects a plain RVTools file rather than the
+    extended 22-sheet IBM Cloud Solutioning Tool (IBM Cool / VCF Migration Lite)
+    format produced by generate_rvtools_xlsx().
+    """
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    ws_vinfo      = wb.create_sheet("vInfo")
+    ws_vnetwork   = wb.create_sheet("vNetwork")
+    ws_vpartition = wb.create_sheet("vPartition")
+    ws_vhost      = wb.create_sheet("vHost")
+
+    _write_header(ws_vinfo,      VINFO_HEADERS)
+    _write_header(ws_vnetwork,   VNETWORK_HEADERS)
+    _write_header(ws_vpartition, VPARTITION_HEADERS)
+    _write_header(ws_vhost,      VHOST_HEADERS)
+
+    seen_hosts: set[str] = set()
+
+    for record in records:
+        if record is None:
+            continue
+
+        vinfo            = record.get("vinfo") or {}
+        vnetwork_list    = record.get("vnetwork") or []
+        vpartition_list  = record.get("vpartition") or []
+        vhost            = record.get("vhost") or {}
+
+        # --- vInfo (one row per VM) ---
+        if vinfo:
+            ws_vinfo.append([
+                _get(vinfo, "vm_name"),
+                _get(vinfo, "powerstate"),
+                _get(vinfo, "template"),
+                _get(vinfo, "cpus"),
+                _get(vinfo, "memory_mb"),
+                _get(vinfo, "nics"),
+                _get(vinfo, "disks"),
+                _get(vinfo, "provisioned_mb"),
+                _get(vinfo, "in_use_mb"),
+                _get(vinfo, "datacenter"),
+                _get(vinfo, "cluster"),
+                _get(vinfo, "host"),
+                _get(vinfo, "os_config"),
+                _get(vinfo, "os_vmware_tools"),
+            ])
+
+        # --- vNetwork (one row per NIC) ---
+        for nic in vnetwork_list:
+            if not isinstance(nic, dict):
+                continue
+            ws_vnetwork.append([
+                _get(nic, "vm_name"),
+                _get(nic, "powerstate"),
+                _get(nic, "template"),
+                _get(nic, "srm_placeholder"),
+                _get(nic, "nic_label"),
+                _get(nic, "adapter"),
+                _get(nic, "network"),
+                _get(nic, "switch"),
+                _get(nic, "connected"),
+                _get(nic, "starts_connected"),
+                _get(nic, "mac_address"),
+                _get(nic, "type"),
+                _get(nic, "ipv4_address"),
+                _get(nic, "ipv6_address"),
+                _get(nic, "direct_path_io"),
+                _get(nic, "internal_sort_column"),
+                _get(nic, "annotation"),
+            ])
+
+        # --- vPartition (one row per disk/partition) ---
+        for part in vpartition_list:
+            if not isinstance(part, dict):
+                continue
+            ws_vpartition.append([
+                _get(part, "vm_name"),
+                _get(part, "powerstate"),
+                _get(part, "template"),
+                _get(part, "disk_label"),
+                _get(part, "capacity_mb"),
+                _get(part, "consumed_mb"),
+                _get(part, "free_mb"),
+                _get(part, "free_pct"),
+                _get(part, "datacenter"),
+                _get(part, "cluster"),
+                _get(part, "host"),
+                _get(part, "os_config"),
+                _get(part, "os_vmware_tools"),
+            ])
+
+        # --- vHost (deduplicated by host_name) ---
+        if vhost:
+            host_name = _get(vhost, "host_name") or ""
+            if host_name and host_name not in seen_hosts:
+                seen_hosts.add(host_name)
+                ws_vhost.append([
+                    _get(vhost, "host_name"),
+                    _get(vhost, "datacenter"),
+                    _get(vhost, "cluster"),
+                    _get(vhost, "config_status"),
+                    _get(vhost, "cpu_model"),
+                    _get(vhost, "speed_mhz"),
+                    _get(vhost, "ht_available"),
+                    _get(vhost, "ht_active"),
+                    _get(vhost, "num_cpu"),
+                    _get(vhost, "cores_per_cpu"),
+                    _get(vhost, "num_cores"),
+                    _get(vhost, "cpu_usage_pct"),
+                    _get(vhost, "memory_mb"),
+                    _get(vhost, "memory_usage_pct"),
+                    _get(vhost, "console"),
+                    _get(vhost, "num_nics"),
+                    _get(vhost, "num_hbas"),
+                    _get(vhost, "num_vms"),
+                    _get(vhost, "vms_per_core"),
+                    _get(vhost, "num_vcpus"),
+                    _get(vhost, "vcpus_per_core"),
+                    _get(vhost, "vram_mb"),
+                    _get(vhost, "vm_used_memory"),
+                    _get(vhost, "vm_memory_swapped"),
+                    _get(vhost, "vm_memory_ballooned"),
+                    _get(vhost, "esx_version"),
+                    _get(vhost, "vendor"),
+                    _get(vhost, "model"),
+                ])
+
+    _auto_size_columns(ws_vinfo,      VINFO_HEADERS)
+    _auto_size_columns(ws_vnetwork,   VNETWORK_HEADERS)
+    _auto_size_columns(ws_vpartition, VPARTITION_HEADERS)
+    _auto_size_columns(ws_vhost,      VHOST_HEADERS)
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -73,7 +73,23 @@ def _auto_size_columns(ws: Any, headers: list[str]) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
-def generate_assumptions_xlsx(assumptions: list[dict], project_name: str) -> bytes:
+EXCLUDED_SERVERS_HEADERS = [
+    "VM / Server Name",
+    "Operating System",
+    "Server Type",
+    "Exclusion Reason",
+    "Excluded At",
+]
+
+_ORANGE_FILL = PatternFill("solid", fgColor="FFE5CC")   # light orange — excluded
+
+
+def generate_assumptions_xlsx(
+    assumptions: list[dict],
+    project_name: str,
+    excluded_servers: list[dict] | None = None,
+    powervs_only: bool = False,
+) -> bytes:
     """Generate a human-readable Assumptions Report .xlsx.
 
     Args:
@@ -81,6 +97,10 @@ def generate_assumptions_xlsx(assumptions: list[dict], project_name: str) -> byt
             vm_name, field_name, assumed_value, original_value,
             reasoning, confidence, created_at
         project_name: used for context (caller uses for filename).
+        excluded_servers: optional list of excluded server records to add as a
+            dedicated "Excluded Servers" sheet.  Each dict has:
+            vm_name, os_config, server_type, exclusion_reason, excluded_at.
+        powervs_only: if True, only include assumptions for PowerVS records.
 
     Returns:
         bytes: the complete Excel file ready to store or stream.
@@ -167,6 +187,28 @@ def generate_assumptions_xlsx(assumptions: list[dict], project_name: str) -> byt
         ws_s.cell(ws_s.max_row, 1).font = _BOLD_FONT
 
     _auto_size_columns(ws_s, SUMMARY_HEADERS)
+
+    # ------------------------------------------------------------------
+    # Sheet 3 — Excluded Servers (only when caller provides the list)
+    # ------------------------------------------------------------------
+    if excluded_servers:
+        ws_e = wb.create_sheet("Excluded Servers")
+        _write_header(ws_e, EXCLUDED_SERVERS_HEADERS, _HEADER_FILL, _HEADER_FONT)
+        for rec in excluded_servers:
+            timestamp = rec.get("excluded_at")
+            if timestamp is not None and hasattr(timestamp, "isoformat"):
+                timestamp = timestamp.isoformat()
+            row_data = [
+                rec.get("vm_name"),
+                rec.get("os_config"),
+                rec.get("server_type"),
+                rec.get("exclusion_reason") or "(no reason provided)",
+                timestamp,
+            ]
+            ws_e.append(row_data)
+            for cell in ws_e[ws_e.max_row]:
+                cell.fill = _ORANGE_FILL
+        _auto_size_columns(ws_e, EXCLUDED_SERVERS_HEADERS)
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -264,3 +264,45 @@ async def process_single_record(
         "server_type": record.server_type,
         "error_message": record.error_message,
     }
+
+
+@router.post(
+    "/projects/{project_id}/processing/reset-stuck",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+)
+async def reset_stuck_records(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Reset any records stuck in 'processing' state back to 'pending'.
+
+    A record can get stuck if the API container was restarted while a background
+    task was running, or if Ollama hung without raising an error.  Call this
+    endpoint followed by POST /process to resume.
+    """
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "processing",
+        )
+    )
+    stuck = result.scalars().all()
+    count = len(stuck)
+
+    for record in stuck:
+        record.processing_status = "pending"
+        record.error_message = None
+
+    await db.commit()
+    logger.info("Reset %d stuck records to pending for project %s", count, project_id)
+
+    return {
+        "reset_count": count,
+        "message": (
+            f"Reset {count} stuck record(s) to pending. "
+            "Call POST /projects/{project_id}/process to resume."
+        ),
+    }
