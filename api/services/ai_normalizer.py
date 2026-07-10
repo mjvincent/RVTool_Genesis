@@ -582,7 +582,7 @@ def _synthesize_from_raw(raw_data: dict) -> dict:
     server_type = infer_server_type(raw_data)
 
     os_config, _ = _normalize_os_name(os_raw)
-    os_tools  = "toolsOk" if server_type == "vm" else "toolsNotInstalled"
+    os_tools  = os_config   # mirror os_config — never use status strings here
     host      = f"{vm_name}-host.customer.com"
     dc        = str(_pick("datacenter", "cluster_type") or "Datacenter1")
     cluster   = str(_pick("pool_or_cluster_name", "cluster") or "Cluster1")
