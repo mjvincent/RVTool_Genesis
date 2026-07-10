@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, LargeBinary, String, Text
+from sqlalchemy import ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,6 +82,9 @@ class ServerRecord(Base):
     server_type: Mapped[str | None] = mapped_column(String, nullable=True)
     processing_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Exclusion — user-controlled, survives page refresh
+    is_excluded: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    exclusion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
@@ -154,3 +157,45 @@ class AssumptionsExport(Base):
 
     # relationships
     project: Mapped["Project"] = relationship(back_populates="assumptions_exports")
+
+
+class LLMSettings(Base):
+    """Single-row settings table (id=1 always) for LLM provider configuration.
+
+    API keys are stored encrypted (AES-256 Fernet) — never plaintext.
+    """
+    __tablename__ = "llm_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    provider: Mapped[str] = mapped_column(String, nullable=False, default="ollama")
+
+    # Ollama overrides (optional — falls back to env vars)
+    ollama_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    ollama_model: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # IBM watsonx.ai
+    watsonx_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    watsonx_project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    watsonx_url: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="https://us-south.ml.cloud.ibm.com"
+    )
+    watsonx_model: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="ibm/granite-3-8b-instruct"
+    )
+
+    # OpenAI-compatible
+    openai_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    openai_base_url: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="https://api.openai.com"
+    )
+    openai_model: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="gpt-4o-mini"
+    )
+
+    # Anthropic
+    anthropic_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    anthropic_model: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="claude-3-haiku-20240307"
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)

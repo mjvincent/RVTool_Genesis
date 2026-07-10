@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://rvtool:rvtool_password@db:5432/rvtooldb"
 
+    # Encryption key for API keys stored in the DB.
+    # Override with a long random string in .env before using cloud LLM providers.
+    # The default is intentionally weak — it works out of the box for Ollama-only use.
+    secret_key: str = "rvtool-genesis-change-me-in-production"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
