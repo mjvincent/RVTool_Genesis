@@ -2,7 +2,7 @@
 
 A containerized tool that converts customer server inventory spreadsheets into IBM RVTools-compatible output for use with the IBM Cool sizing tool.
 
-Powered by **Ollama (phi4-mini)** — fully local AI, no API key, no cloud. Customer data never leaves your machine.
+Powered by a **pluggable LLM backend** — use IBM watsonx.ai for IBM engagement work, or run fully local with Ollama (no API key, no cloud). Configure your preferred provider in the Settings page.
 
 ## What it does
 
@@ -14,7 +14,7 @@ Powered by **Ollama (phi4-mini)** — fully local AI, no API key, no cloud. Cust
 ## Prerequisites
 
 - [OrbStack](https://orbstack.dev) (recommended) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [Ollama](https://ollama.com) — installed and running on your Mac with `phi4-mini` available
+- [Ollama](https://ollama.com) *(only if using the Ollama provider — the default)* — installed and running on your Mac with `phi4-mini` available
 
   ```bash
   # Install Ollama from https://ollama.com then pull the model:
@@ -77,10 +77,16 @@ All defaults are pre-configured and work without changes. Edit `.env` only if yo
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint (host Mac from inside container) |
 | `OLLAMA_MODEL` | `phi4-mini` | Ollama model to use for normalization |
+| `SECRET_KEY` | *(weak default)* | AES-256 key for encrypting cloud API keys in DB — **change this** before using cloud providers |
 | `DATABASE_URL` | `postgresql://rvtool:...@db:5432/rvtooldb` | PostgreSQL connection |
 | `POSTGRES_DB` | `rvtooldb` | Database name |
 | `POSTGRES_USER` | `rvtool` | Database user |
 | `POSTGRES_PASSWORD` | `rvtool_password` | Database password |
+
+Generate a strong `SECRET_KEY`:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
 
 ## Architecture
 
@@ -88,22 +94,25 @@ All defaults are pre-configured and work without changes. Edit `.env` only if yo
 OrbStack / Docker Compose
 ├── web :3001  (React + Carbon v11)
 │   ├── ProjectsPage       — create/manage projects
-│   ├── ProjectDetailPage  — upload, process, review, export
-│   ├── RecordsTable       — review normalized server records
-│   ├── AssumptionsPanel   — view AI decisions per record
-│   └── ExportBar          — download RVTools + Assumptions files
+│   ├── UploadPage         — file upload
+│   ├── NormalizePage      — AI normalization progress
+│   ├── ReviewPage         — review records + assumptions
+│   ├── ExportPage         — download RVTools + Assumptions files
+│   └── SettingsPage       — LLM provider configuration
 │
 ├── api :8001  (FastAPI + Python 3.12)
 │   ├── /api/projects          — project CRUD
 │   ├── /api/uploads           — file upload + raw parse
 │   ├── /api/process           — AI normalization (background tasks)
 │   ├── /api/export            — RVTools + Assumptions .xlsx generation
+│   ├── /api/settings          — LLM provider settings (GET/POST/test)
 │   │
 │   └── services/
 │       ├── spreadsheet_parser   — pandas: handles any freeform .xlsx/.csv
-│       ├── ai_normalizer        — Ollama phi4-mini: maps columns, fills gaps
+│       ├── ai_normalizer        — LLM dispatcher + cloud/Ollama adapters
+│       ├── crypto               — AES-256 Fernet encryption for API keys
 │       ├── network_inference    — default subnet/gateway/NIC logic
-│       ├── rvtools_generator    — openpyxl: generates 4-tab RVTools file
+│       ├── rvtools_generator    — openpyxl: generates 22-sheet RVTools file
 │       ├── assumptions_generator — openpyxl: generates Assumptions Report
 │       └── validator            — structural validation for generated files
 │
@@ -113,9 +122,10 @@ OrbStack / Docker Compose
     ├── server_records  (JSONB: raw_data, normalized_data)
     ├── assumptions
     ├── rvtools_exports
-    └── assumptions_exports
+    ├── assumptions_exports
+    └── llm_settings         (single-row: active provider + encrypted keys)
 │
-[host Mac — NOT in Docker]
+[host Mac — NOT in Docker, only when using Ollama provider]
 └── Ollama :11434
     └── phi4-mini  ← reached via host.docker.internal from containers
 ```
@@ -195,7 +205,126 @@ The generated `.xlsx` contains all standard RVTools 4.x sheets required by downs
 | `vHost` | Physical host details |
 | `vFloppy`, `vCD`, `vSnapshot`, `vRP`, `vCluster`, `vHBA`, `vNIC`, `vSwitch`, `vPort`, `vSC+VM`, `vDatastore`, `vMultiWriter` | Header-only stubs (required for format validation) |
 
+## LLM Providers
+
+The active LLM provider is configured in the **Settings** page (`/settings`) and
+persisted to the database — no container restart needed after switching.
+
+| Provider | API Key Required | Notes |
+|---|---|---|
+| **Ollama (local)** | No | Default. Requires Ollama running on your Mac. `ollama pull phi4-mini` |
+| **IBM watsonx.ai** ⭐ | IBM Cloud API key + Project ID | Recommended for IBM engagement work. Use `ibm/granite-3-8b-instruct` |
+| **OpenAI-compatible** | API key | Works with OpenAI, Azure OpenAI, local vLLM, LM Studio |
+| **Anthropic** | API key | Claude models (Haiku recommended for speed/cost) |
+
+### Getting an IBM watsonx.ai API key
+
+1. Log in to [cloud.ibm.com](https://cloud.ibm.com)
+2. Go to **Manage → Access (IAM) → API keys** → Create
+3. Open your watsonx.ai project → **Manage → General** → copy the Project ID
+4. Enter both in the Settings page and click **Test connection**
+
+### IBM IAM token caching
+
+For watsonx.ai, an IBM IAM Bearer token is obtained once and cached for 50 minutes
+(tokens expire at 60 min). This means IAM is only called once per processing run, not
+once per server record.
+
+### Security
+
+- API keys are encrypted with AES-256 (Fernet) before being stored in PostgreSQL
+- Keys are never logged or returned in plaintext from any API endpoint
+- Only a masked hint (`••••••••abcd`) is displayed in the UI
+- Set a strong `SECRET_KEY` in `.env` before using cloud providers
+
+### Switching providers
+
+Changes take effect immediately on the next `POST /process` call. No container restart
+is needed. The Python fallback synthesizer remains active as a last resort if the cloud
+provider fails.
+
+
+## PowerVS Auto-Detection
+
+When a server's operating system is **AIX** or **IBM i** (any version), the AI normalizer
+automatically designates it as a **PowerVS** workload. This happens in both the LLM path
+and the Python fallback synthesizer, and is enforced as a guaranteed post-processing step
+regardless of the LLM's response.
+
+**Trigger patterns (case-insensitive, substring match):**
+`AIX`, `IBM i`, `IBMi`, `i/OS`, `OS/400`, `IBM OS/400`
+
+### What happens to PowerVS records
+
+1. `server_type` is set to `"powervs"` (shown as a purple "PowerVS" tag in the Review table)
+2. A high-confidence assumption is added explaining the designation
+3. In the Export page, PowerVS records are **routed to a separate set of exports**:
+   - **PowerVS Cloud Solutioning Tool Export** — 22-sheet IBM Cool workbook, PowerVS only
+   - **PowerVS Assumptions Report** — AI decisions for PowerVS records only
+4. Standard x86 exports **exclude** PowerVS records
+5. Both exports are generated independently and uploaded to IBM Cool separately
+
+### Why separate exports?
+
+The IBM Cool / Cloud Solutioning Tool scopes its entire pricing proposal to a single uploaded
+workbook. Mixing x86 Virtual Servers and PowerVS workloads in the same upload produces
+incorrect results. Each pricing exercise requires its own dedicated RVTools file.
+
+### Mixed-workload banner
+
+When a project contains both x86 and PowerVS records, the Export page shows an
+informational banner explaining the automatic separation, with the exact record counts
+for each type.
+
+### Overriding the designation
+
+In the Review table, click "Edit this record" to change `server_type` to/from `powervs`
+if the automatic detection was incorrect.
+
+---
+
+## Server Exclusion
+
+Any server can be excluded from all generated reports via the **Exclude checkbox** in
+the Review table.
+
+### How it works
+
+- Check the "Exclude" checkbox on any row → record is immediately excluded (persists to DB)
+- Excluded rows display at 55% opacity with a strikethrough server name
+- An optional reason text field appears in the expanded row (saves on blur or Enter)
+- Excluded records are **omitted from all RVTools exports** (x86 and PowerVS)
+- Excluded records appear in an **"Excluded Servers" audit sheet** in the Assumptions
+  Report `.xlsx`, showing the server name, OS, type, reason, and timestamp
+
+### Use cases
+
+- Server already migrated
+- Decommissioned / out of scope for this engagement
+- Test/dev server not included in the sizing
+- Customer explicitly requested exclusion
+
+---
+
+
 ## Changelog
+
+### feat/powervs-exclusion
+- **PowerVS auto-detection** — AIX and IBM i operating systems are automatically designated as `server_type = "powervs"` by both the LLM and Python fallback. Enforced as a guaranteed post-processing step.
+- **Separate PowerVS exports** — Export page generates two independent 22-sheet IBM Cool workbooks: one for x86/VPC records and one for PowerVS records. Each is uploaded to IBM Cool separately for independent pricing.
+- **Mixed-workload banner** — When a project contains both x86 and PowerVS records, a banner on the Export page explains the automatic separation.
+- **Server exclusion** — Checkbox in the Review table excludes servers from all exports. Optional reason stored in DB and surfaced in an "Excluded Servers" audit sheet in the Assumptions Report.
+- **DB migration** — `is_excluded` (boolean) and `exclusion_reason` (text) columns added to `server_records`.
+- **Purple "PowerVS" tag** — Type column in Review table now has three distinct tags: Virtual (blue), Bare Metal (teal), PowerVS (purple).
+- **`PATCH /records/{id}/exclude`** — New endpoint to toggle exclusion and set reason, independent of the vinfo editor.
+
+### feat/llm-providers
+- **Multi-provider LLM support** — Settings page lets you switch between Ollama (local), IBM watsonx.ai, OpenAI-compatible, and Anthropic Claude
+- **IBM watsonx.ai integration** — IAM token exchange + 50-min cache; defaults to `ibm/granite-3-8b-instruct`
+- **AES-256 key encryption** — cloud API keys encrypted with Fernet before PostgreSQL storage; never logged or returned in plaintext
+- **Test Connection button** — validates provider credentials and shows latency + model response before saving
+- **Settings nav link** — "Settings" added to the top navigation bar
+- **`cryptography` dependency** — added to `requirements.txt` (no vendor SDK needed)
 
 ### feat/resilience-and-ux
 - **Full 22-sheet RVTools output** — adds all missing tabs (`vDisk`, `vCPU`, `vMemory`, `vTools`, `vHealth`, `vFileInfo`, and 12 stub sheets). Fixes "Unrecognised source format" error from VCF Migration Lite.

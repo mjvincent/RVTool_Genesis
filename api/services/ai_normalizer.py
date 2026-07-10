@@ -83,6 +83,34 @@ def _synthesize_vhost(vm_name: str, datacenter: str, cluster: str, memory_mb: in
 
 
 # ---------------------------------------------------------------------------
+# PowerVS OS detection — AIX and IBM i workloads → PowerVS designation
+# ---------------------------------------------------------------------------
+
+# Case-insensitive substrings that indicate an IBM Power workload.
+# Any OS string matching one of these causes server_type to be forced to "powervs".
+_POWERVS_OS_PATTERNS = ["aix", "ibm i", "ibmi", "i/os", "os/400", "ibm os/400"]
+
+
+def _is_powervs_os(os_str: str) -> bool:
+    """Return True if the OS string indicates an AIX or IBM i workload."""
+    lower = os_str.lower()
+    return any(pat in lower for pat in _POWERVS_OS_PATTERNS)
+
+
+_POWERVS_ASSUMPTION = {
+    "field_name": "server_type",
+    "assumed_value": "powervs",
+    "original_value": None,
+    "reasoning": (
+        "Operating system is AIX or IBM i — automatically designated as an IBM Power "
+        "Virtual Server (PowerVS) workload. These workloads require a separate IBM Cool "
+        "pricing exercise from x86/VPC workloads."
+    ),
+    "confidence": "high",
+}
+
+
+# ---------------------------------------------------------------------------
 # LLM Prompt — focused only on fields the LLM can derive
 # ---------------------------------------------------------------------------
 
@@ -100,9 +128,10 @@ _SYSTEM_PROMPT = (
     "5. nics = integer count of network adapters, default 1 if unknown.\n"
     "6. disks = integer count of disks, default 1 if unknown.\n"
     "7. os_vmware_tools = same full OS string as os_config (e.g. 'Microsoft Windows Server 2019 (64-bit)'), NOT 'toolsOk'.\n"
-    "8. capacity_mb and consumed_mb = integers in MB. If source is GB, multiply by 1024.\n\n"
+    "8. capacity_mb and consumed_mb = integers in MB. If source is GB, multiply by 1024.\n"
+    "9. server_type = 'powervs' when OS is AIX or IBM i (any version). Use 'vm' or 'bare_metal' for all other OS types.\n\n"
     "Required fields:\n"
-    '{"server_type":"vm|bare_metal",'
+    '{"server_type":"vm|bare_metal|powervs (use powervs for AIX or IBM i OS)",'
     '"vinfo":{"vm_name":str,"powerstate":"poweredOn|poweredOff","template":"FALSE",'
     '"cpus":int,"memory_mb":int(RAM in MB - multiply GB by 1024),"nics":int(default 1),"disks":int(default 1),'
     '"provisioned_mb":int(total disk MB),"in_use_mb":int(default provisioned_mb*0.6),'
@@ -497,7 +526,7 @@ def _sanitize_numeric_fields(result: dict) -> dict:
     # --- vpartition ---
     _MIN_DISK_MB = 10   # anything below 10 MB is almost certainly in GB
     for part in result.get("vpartition") or []:
-        if not part:
+        if not isinstance(part, dict):   # guard: LLM sometimes returns list of strings
             continue
         # Auto-convert disk values that look like GB
         raw_cap = part.get("capacity_mb", 0)
@@ -519,7 +548,7 @@ def _sanitize_numeric_fields(result: dict) -> dict:
     # --- vnetwork — inject gateway/DNS/security-group assumptions for placeholder IPs ---
     vm_name = (result.get("vinfo") or {}).get("vm_name", "unknown")
     for idx, nic in enumerate(result.get("vnetwork") or []):
-        if not nic:
+        if not isinstance(nic, dict):   # guard: LLM sometimes returns list of strings
             continue
         ipv4 = nic.get("ipv4_address") or ""
         is_placeholder = (
@@ -579,7 +608,11 @@ def _synthesize_from_raw(raw_data: dict) -> dict:
     mem_mb     = _safe_int(ram_raw, 4096)
     disk_raw   = _pick("disk_gb", "disk_mb", "storage_gb")
     disk_mb    = _safe_int(float(disk_raw) * 1024 if disk_raw else None, 51200)
-    server_type = infer_server_type(raw_data)
+    # PowerVS detection takes priority over generic server_type inference
+    if _is_powervs_os(os_raw):
+        server_type = "powervs"
+    else:
+        server_type = infer_server_type(raw_data)
 
     os_config, _ = _normalize_os_name(os_raw)
     os_tools  = os_config   # mirror os_config — never use status strings here
@@ -613,13 +646,17 @@ def _synthesize_from_raw(raw_data: dict) -> dict:
         "datacenter": dc, "cluster": cluster, "host": host,
         "os_config": os_config, "os_vmware_tools": os_tools,
     }]
-    assumptions = [{
-        "field_name": "all_fields",
-        "assumed_value": "synthesized from raw data",
-        "original_value": None,
-        "reasoning": "Ollama normalization failed for this record — all values synthesized directly from raw spreadsheet data using Python defaults.",
-        "confidence": "low",
-    }]
+    assumptions = [
+        {
+            "field_name": "all_fields",
+            "assumed_value": "synthesized from raw data",
+            "original_value": None,
+            "reasoning": "LLM normalization failed for this record — all values synthesized directly from raw spreadsheet data using Python defaults.",
+            "confidence": "low",
+        }
+    ]
+    if server_type == "powervs":
+        assumptions.append(dict(_POWERVS_ASSUMPTION))
     return {
         "server_type": server_type,
         "vinfo": vinfo,
@@ -694,6 +731,11 @@ def _repair_truncated_json(text: str) -> str:
 _OLLAMA_TIMEOUT_SECONDS = 120.0
 _MAX_RETRIES = 1   # retry once on timeout/connect error before falling back
 
+# IAM token cache: { api_key_hash -> (token, expiry_epoch) }
+# Tokens expire at 60 min; we refresh at 50 min to be safe.
+_IAM_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_IAM_TOKEN_TTL = 50 * 60  # 50 minutes in seconds
+
 
 def _call_ollama(payload: dict) -> str:
     """POST to Ollama /api/generate with timeout and retry.
@@ -743,13 +785,193 @@ def _call_ollama(payload: dict) -> str:
     ) from last_exc
 
 
-def normalize_record(raw_data: dict) -> dict:
-    """Normalize a single raw server record using Ollama.
+# ---------------------------------------------------------------------------
+# Cloud LLM adapters
+# ---------------------------------------------------------------------------
 
-    Calls Ollama with a 120 s timeout and one automatic retry.
-    If Ollama times out or returns unparseable JSON, the record is
-    synthesized from raw data by the Python fallback — it is never
-    left in a permanently-stuck 'processing' state.
+def _call_watsonx(prompt_text: str, settings_row: "LLMSettings") -> str:  # type: ignore[name-defined]
+    """Call IBM watsonx.ai with IAM token (cached for 50 min)."""
+    import hashlib
+    import time as _time
+
+    api_key = _decrypt_safe(settings_row.watsonx_api_key_enc)
+    if not api_key:
+        raise ValueError("watsonx API key not configured — set it in Settings.")
+    project_id = settings_row.watsonx_project_id
+    if not project_id:
+        raise ValueError("watsonx Project ID not configured — set it in Settings.")
+    watsonx_url = settings_row.watsonx_url or "https://us-south.ml.cloud.ibm.com"
+    model = settings_row.watsonx_model or "ibm/granite-3-8b-instruct"
+
+    # IAM token — use cache to avoid hitting IAM on every record
+    cache_key = hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    now = _time.time()
+    if cache_key in _IAM_TOKEN_CACHE:
+        token, expiry = _IAM_TOKEN_CACHE[cache_key]
+        if now < expiry:
+            pass  # cache hit
+        else:
+            del _IAM_TOKEN_CACHE[cache_key]
+            token = None
+    else:
+        token = None
+
+    if token is None:
+        iam_resp = httpx.post(
+            "https://iam.cloud.ibm.com/identity/token",
+            data={"grant_type": "urn:ibm:params:oauth:grant-type:apikey", "apikey": api_key},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=20.0,
+        )
+        iam_resp.raise_for_status()
+        token = iam_resp.json()["access_token"]
+        _IAM_TOKEN_CACHE[cache_key] = (token, now + _IAM_TOKEN_TTL)
+
+    resp = httpx.post(
+        f"{watsonx_url}/ml/v1/text/generation?version=2024-01-01",
+        json={
+            "model_id": model,
+            "input": f"{_SYSTEM_PROMPT}\n\nServer data:\n{prompt_text}",
+            "project_id": project_id,
+            "parameters": {"max_new_tokens": 3000, "temperature": 0},
+        },
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        timeout=_OLLAMA_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    return resp.json()["results"][0]["generated_text"]
+
+
+def _call_openai(prompt_text: str, settings_row: "LLMSettings") -> str:  # type: ignore[name-defined]
+    """Call an OpenAI-compatible /v1/chat/completions endpoint."""
+    api_key = _decrypt_safe(settings_row.openai_api_key_enc)
+    if not api_key:
+        raise ValueError("OpenAI API key not configured — set it in Settings.")
+    base_url = settings_row.openai_base_url or "https://api.openai.com"
+    model = settings_row.openai_model or "gpt-4o-mini"
+
+    resp = httpx.post(
+        f"{base_url}/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": f"Server data:\n{prompt_text}"},
+            ],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 3000,
+            "temperature": 0,
+        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        timeout=_OLLAMA_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _call_anthropic(prompt_text: str, settings_row: "LLMSettings") -> str:  # type: ignore[name-defined]
+    """Call Anthropic Claude via /v1/messages."""
+    api_key = _decrypt_safe(settings_row.anthropic_api_key_enc)
+    if not api_key:
+        raise ValueError("Anthropic API key not configured — set it in Settings.")
+    model = settings_row.anthropic_model or "claude-3-haiku-20240307"
+
+    resp = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        json={
+            "model": model,
+            "max_tokens": 3000,
+            "system": _SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": f"Server data:\n{prompt_text}"}],
+        },
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        timeout=_OLLAMA_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    return resp.json()["content"][0]["text"]
+
+
+def _decrypt_safe(enc_value: str | None) -> str:
+    """Decrypt an encrypted field; return empty string on any failure."""
+    if not enc_value:
+        return ""
+    try:
+        from services.crypto import decrypt
+        return decrypt(enc_value)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _get_active_settings():
+    """Read the active LLMSettings row from the DB synchronously.
+
+    `normalize_record` runs in a background thread (not an async context),
+    so we use a regular synchronous SQLAlchemy engine.
+    Returns None if the table is unavailable (e.g. during initial migration).
+    """
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from db.models import LLMSettings
+        from core.config import settings as cfg
+
+        sync_url = cfg.database_url.replace("+asyncpg", "")
+        engine = create_engine(sync_url, pool_size=1, max_overflow=0)
+        with Session(engine) as session:
+            row = session.get(LLMSettings, 1)
+        engine.dispose()
+        return row
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read LLM settings from DB (%s) — defaulting to Ollama", exc)
+        return None
+
+
+def _call_llm(raw_data: dict) -> tuple[str, dict]:
+    """Dispatch to the active LLM provider and return (raw_text, ollama_payload).
+
+    Returns (raw_text, {}) for cloud providers (raw_text is the JSON string).
+    Returns ("", payload) for Ollama (caller uses _call_ollama(payload)).
+
+    Raises ValueError on failure — caller falls back to Python synthesizer.
+    """
+    prompt_text = _build_prompt(raw_data)
+    row = _get_active_settings()
+    provider = (row.provider if row else "ollama")
+
+    if provider == "watsonx" and row:
+        logger.info("LLM dispatch → watsonx (%s)", row.watsonx_model or "granite-3-8b")
+        return _call_watsonx(prompt_text, row), {}
+
+    if provider == "openai" and row:
+        logger.info("LLM dispatch → openai (%s)", row.openai_model or "gpt-4o-mini")
+        return _call_openai(prompt_text, row), {}
+
+    if provider == "anthropic" and row:
+        logger.info("LLM dispatch → anthropic (%s)", row.anthropic_model or "claude-3-haiku")
+        return _call_anthropic(prompt_text, row), {}
+
+    # Default: Ollama
+    logger.info("LLM dispatch → ollama (%s)", settings.ollama_model)
+    ollama_payload = {
+        "model": settings.ollama_model,
+        "prompt": prompt_text,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0, "num_predict": 3000},
+    }
+    return "", ollama_payload
+
+
+def normalize_record(raw_data: dict) -> dict:
+    """Normalize a single raw server record using the active LLM provider.
+
+    Dispatches to watsonx.ai, OpenAI, Anthropic, or Ollama depending on the
+    active provider configured in Settings.  Falls back to the Python
+    synthesizer if the LLM call fails for any reason.
 
     vHost is always synthesized in Python (not by the LLM) to stay
     within context limits.
@@ -757,24 +979,13 @@ def normalize_record(raw_data: dict) -> dict:
     Returns a dict with keys:
         server_type, vinfo, vnetwork, vpartition, vhost, assumptions
     """
-    prompt = _build_prompt(raw_data)
-
-    payload = {
-        "model": settings.ollama_model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {
-            "temperature": 0,
-            "num_predict": 3000,
-        },
-    }
-
     try:
-        raw_text = _call_ollama(payload)
+        raw_text, ollama_payload = _call_llm(raw_data)
+        if ollama_payload:
+            # Ollama path: use the dedicated caller with timeout/retry logic
+            raw_text = _call_ollama(ollama_payload)
     except ValueError as exc:
-        # Ollama unreachable or timed out after retries — use Python synthesizer
-        logger.warning("Ollama failed (%s) — using Python synthesizer for this record", exc)
+        logger.warning("LLM failed (%s) — using Python synthesizer for this record", exc)
         return _synthesize_from_raw(raw_data)
 
     cleaned = _extract_json(raw_text)
@@ -803,7 +1014,21 @@ def normalize_record(raw_data: dict) -> dict:
 
     result = _sanitize_numeric_fields(result)
 
+    # ── PowerVS post-processor: override server_type if OS is AIX/IBM i ──────
+    # The LLM should already return "powervs" per the prompt, but we enforce it
+    # in Python as a guaranteed post-processing step regardless of LLM compliance.
     vinfo = result.get("vinfo", {})
+    os_cfg_str = str(vinfo.get("os_config") or "")
+    if _is_powervs_os(os_cfg_str) and result.get("server_type") != "powervs":
+        result["server_type"] = "powervs"
+        logger.info("PowerVS override applied for OS: %s", os_cfg_str)
+
+    if result.get("server_type") == "powervs":
+        # Ensure assumption is present (idempotent — only add once)
+        existing_fields = {a.get("field_name") for a in result.get("assumptions", [])}
+        if "server_type" not in existing_fields:
+            result["assumptions"] = result.get("assumptions", []) + [dict(_POWERVS_ASSUMPTION)]
+
     vhost, vhost_assumptions = _synthesize_vhost(
         vm_name=vinfo.get("vm_name", "unknown"),
         datacenter=vinfo.get("datacenter", "Datacenter1"),

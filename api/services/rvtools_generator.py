@@ -223,15 +223,53 @@ def _get(d: dict, key: str, default: Any = None) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
-def generate_rvtools_xlsx(records: list[dict], project_name: str) -> bytes:
+def generate_rvtools_xlsx(
+    records: list[dict],
+    project_name: str,
+    powervs_only: bool = False,
+    x86_only: bool = False,
+) -> bytes:
     """Generate a standards-compliant RVTools .xlsx from normalised server records.
 
-    Produces all 22 standard RVTools 4.x sheets.  Sheets for which we have
-    synthesised data (vInfo, vCPU, vMemory, vDisk, vPartition, vNetwork, vHost)
-    are populated.  The remaining sheets are present with correct headers but
-    empty data rows — downstream tools (VCF Migration Lite, IBM Cool) require
-    the sheets to exist for format validation.
+    Produces all 22 standard RVTools 4.x sheets.
+
+    Args:
+        records: list of dicts with keys:
+            ``normalized_data`` (the vinfo/vnetwork/etc dict),
+            ``server_type`` (str),
+            ``is_excluded`` (bool).
+            Also accepts legacy format (plain normalized_data dicts).
+        powervs_only: if True, include only server_type=="powervs" records.
+        x86_only: if True, include only vm/bare_metal records (exclude powervs).
+        Excluded records (is_excluded=True) are always omitted.
     """
+    # Normalise to enriched format — support legacy callers that pass plain dicts
+    enriched: list[dict] = []
+    for r in records:
+        if r is None:
+            continue
+        if "normalized_data" in r:
+            # New enriched format: {"normalized_data": {...}, "server_type": ..., "is_excluded": ...}
+            if r.get("is_excluded"):
+                continue
+            nd = r.get("normalized_data") or {}
+            st = r.get("server_type") or (nd.get("server_type") or "vm")
+        else:
+            # Legacy format: raw normalized_data dict
+            nd = r
+            st = nd.get("server_type") or "vm"
+
+        # Apply powervs / x86 filter
+        is_powervs = (st == "powervs")
+        if powervs_only and not is_powervs:
+            continue
+        if x86_only and is_powervs:
+            continue
+
+        enriched.append(nd)
+
+    records = enriched  # shadow with filtered list
+
     wb = Workbook()
     wb.remove(wb.active)   # remove the default empty sheet
 
