@@ -23,6 +23,7 @@ async def create_project(
     project = Project(
         name=body.name,
         description=body.description,
+        folder_id=body.folder_id,
         vpc_region=body.vpc_region or "us-south",
         vpc_datacenter=body.vpc_datacenter or "us-south-1",
     )
@@ -34,9 +35,25 @@ async def create_project(
 
 @router.get("/projects", response_model=ProjectListResponse)
 async def list_projects(
+    folder_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> ProjectListResponse:
-    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+    """List projects, optionally filtered by folder.
+
+    - folder_id omitted        → all projects (used by backup/restore flows)
+    - folder_id=null           → root-level projects (no folder assigned)
+    - folder_id=<uuid>         → projects inside that folder
+    """
+    stmt = select(Project)
+    if folder_id == "null":
+        stmt = stmt.where(Project.folder_id.is_(None))
+    elif folder_id is not None:
+        try:
+            fid = uuid.UUID(folder_id)
+            stmt = stmt.where(Project.folder_id == fid)
+        except ValueError:
+            pass  # ignore invalid UUID, return all
+    result = await db.execute(stmt.order_by(Project.created_at.desc()))
     projects = result.scalars().all()
     return ProjectListResponse(
         projects=[ProjectResponse.model_validate(p) for p in projects],
@@ -64,6 +81,8 @@ async def update_project(
         project.name = body.name
     if body.description is not None:
         project.description = body.description
+    if body.folder_id is not None:
+        project.folder_id = body.folder_id
     if body.vpc_region is not None:
         project.vpc_region = body.vpc_region
     if body.vpc_datacenter is not None:

@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, TextInput, TextArea, Select, SelectItem, InlineNotification } from '@carbon/react';
 import { api, IBM_VPC_REGIONS } from '../api/client';
 
 export default function NewProjectPage() {
-  const navigate = useNavigate();
+  const navigate       = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Pre-assigned folder from URL: /projects/new?folder_id=<uuid>
+  const presetFolderId = searchParams.get('folder_id') ?? null;
+
   const [name, setName]               = useState('');
   const [description, setDescription] = useState('');
   const [vpcRegion, setVpcRegion]     = useState('us-south');
@@ -30,6 +34,7 @@ export default function NewProjectPage() {
       const project = await api.projects.create({
         name: name.trim(),
         description: description.trim() || undefined,
+        folder_id: presetFolderId,
         vpc_region: vpcRegion,
         vpc_datacenter: vpcDc,
       });
