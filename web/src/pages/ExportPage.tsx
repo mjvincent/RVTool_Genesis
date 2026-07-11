@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem } from '@carbon/react';
-import { DocumentDownload, Checkmark, Information, Lightning } from '@carbon/icons-react';
-import { api, Project, ProcessingStatus } from '../api/client';
+import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem } from '@carbon/react';
+import { DocumentDownload, Checkmark, Information, Lightning, Edit } from '@carbon/icons-react';
+import { api, Project, ProcessingStatus, IBM_VPC_REGIONS } from '../api/client';
 import StepProgress from '../components/StepProgress';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,12 @@ export default function ExportPage() {
   const [status, setStatus]             = useState<ProcessingStatus | null>(null);
   const [powervsCount, setPowervsCount] = useState(0);
 
+  // Region edit state
+  const [editingRegion, setEditingRegion] = useState(false);
+  const [editRegion, setEditRegion]       = useState('');
+  const [editZone, setEditZone]           = useState('');
+  const [regionSaving, setRegionSaving]   = useState(false);
+
   // x86 exports
   const [vpcLoading, setVpcLoading]     = useState(false);
   const [pureLoading, setPureLoading]   = useState(false);
@@ -91,10 +97,24 @@ export default function ExportPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.projects.get(projectId).then(setProject).catch(() => {});
+    api.projects.get(projectId).then(p => {
+      setProject(p);
+      setEditRegion(p.vpc_region ?? 'us-south');
+      setEditZone(p.vpc_datacenter ?? 'us-south-1');
+    }).catch(() => {});
     api.processing.getStatus(projectId).then(setStatus).catch(() => {});
     api.exports.getPowerVSCount(projectId).then(r => setPowervsCount(r.powervs_count)).catch(() => {});
   }, [projectId]);
+
+  async function handleSaveRegion() {
+    setRegionSaving(true);
+    try {
+      const updated = await api.projects.update(projectId, { vpc_region: editRegion, vpc_datacenter: editZone });
+      setProject(updated);
+      setEditingRegion(false);
+    } catch { /* keep editing open on error */ }
+    finally { setRegionSaving(false); }
+  }
 
   const recordCount = status?.complete ?? 0;
   const x86Count = recordCount - powervsCount;
@@ -201,6 +221,64 @@ export default function ExportPage() {
           />
         )}
 
+        {/* ── IBM Cloud Target region banner ─────────────────────────────── */}
+        {project && (
+          <div style={{ background: '#f0f4ff', border: '1px solid #d0e2ff', borderRadius: 4, padding: '0.875rem 1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#0043ce', margin: '0 0 0.25rem' }}>IBM Cloud Target</p>
+              {!editingRegion ? (
+                <p style={{ fontSize: '0.875rem', color: '#161616', margin: 0 }}>
+                  Region: <strong>{project.vpc_region ?? 'us-south'}</strong>
+                  {' · '}Zone: <strong>{project.vpc_datacenter ?? 'us-south-1'}</strong>
+                  {' · '}{IBM_VPC_REGIONS[project.vpc_region ?? 'us-south']?.geography ?? 'North America'}
+                </p>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                  <Select
+                    id="export-region-select"
+                    labelText="Region"
+                    size="sm"
+                    value={editRegion}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                      const r = e.target.value;
+                      setEditRegion(r);
+                      setEditZone(IBM_VPC_REGIONS[r]?.zones[0] ?? `${r}-1`);
+                    }}
+                    style={{ minWidth: 220 }}
+                  >
+                    {Object.entries(IBM_VPC_REGIONS).map(([k, v]) => (
+                      <SelectItem key={k} value={k} text={v.label} />
+                    ))}
+                  </Select>
+                  <Select
+                    id="export-zone-select"
+                    labelText="Availability zone"
+                    size="sm"
+                    value={editZone}
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEditZone(e.target.value)}
+                    style={{ minWidth: 140 }}
+                  >
+                    {(IBM_VPC_REGIONS[editRegion]?.zones ?? [`${editRegion}-1`]).map(z => (
+                      <SelectItem key={z} value={z} text={z} />
+                    ))}
+                  </Select>
+                  <Button size="sm" kind="primary" onClick={handleSaveRegion} disabled={regionSaving}>
+                    {regionSaving ? 'Saving…' : 'Save'}
+                  </Button>
+                  <Button size="sm" kind="ghost" onClick={() => { setEditingRegion(false); setEditRegion(project.vpc_region ?? 'us-south'); setEditZone(project.vpc_datacenter ?? 'us-south-1'); }}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
+            {!editingRegion && (
+              <Button size="sm" kind="ghost" renderIcon={Edit} onClick={() => setEditingRegion(true)} style={{ whiteSpace: 'nowrap' }}>
+                Change region
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* ── x86 / VPC Section ──────────────────────────────────────────── */}
         {x86Count > 0 && (
           <>
@@ -217,7 +295,7 @@ export default function ExportPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <DocumentDownload size={20} style={{ color: '#0f62fe', flexShrink: 0 }} />
                   <span className="export-card-title">Cloud Solution Export</span>
-                  <InfoTooltip text="3-sheet IBM Cloud VPC Calculator workbook (Project Settings, Exceptions, Data Domains). Upload directly to the IBM Cloud Cost Estimator for VPC pricing. Equivalent to the output of rvtools2vpc.vmware-solutions.cloud.ibm.com. Filename: VPC_Calculator_<ProjectName>_<date>.xlsx." />
+                  <InfoTooltip text="3-sheet IBM Cloud VPC Calculator workbook (Project Settings, Exceptions, Data Domains). Upload directly to the IBM Cloud Cost Estimator for VPC pricing. Equivalent to the output of rvtools2vpc.vmware-solutions.cloud.ibm.com. Filename: CloudSolution_<ProjectName>_<date>.xlsx." />
                   <span style={{ fontSize: '0.75rem', color: '#0043ce', display: 'block', width: '100%', marginTop: '0.1rem' }}>
                     (IBM Cloud Cost Estimator — region: <strong>{project?.vpc_region ?? 'us-south'}</strong> / zone: <strong>{project?.vpc_datacenter ?? 'us-south-1'}</strong>)
                   </span>
