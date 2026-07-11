@@ -1,15 +1,40 @@
 # RVTool Genesis
 
-A containerized tool that converts customer server inventory spreadsheets into IBM RVTools-compatible output for use with the IBM Cool sizing tool.
+A containerized tool that converts customer server inventory spreadsheets into IBM RVTools-compatible output for use with the IBM Cloud sizing tools.
 
 Powered by a **pluggable LLM backend** — use IBM watsonx.ai for IBM engagement work, or run fully local with Ollama (no API key, no cloud). Configure your preferred provider in the Settings page.
+
+## Why this tool exists
+
+Producing an IBM Cloud cost estimate for a customer migration requires populating the **IBM Cloud Cost Estimator** with every server in scope — one entry per virtual machine or bare metal server. For a typical mid-size engagement this means hundreds to thousands of individual form entries, each requiring CPU count, RAM, OS, disk size, IOPS tier, region, and billing type.
+
+The table below shows what that looks like at 1,454 servers (a real engagement dataset):
+
+| Pace Per Entry | Total Active Time |
+| :--- | :--- |
+| 1 min — best case | **24 hours** |
+| 1.5 min — realistic average | **36.5 hours** |
+| 2 min — complex entries / slow forms | **48.5 hours** |
+
+Three real-world variables push that number even higher:
+
+- **System latency** — pricing forms often require a page refresh or database lookup per entry. A 3-second load lag alone adds over an hour of dead time across 1,454 entries.
+- **Cognitive fatigue** — high-precision data entry slows down as eye strain sets in. Errors in pricing are costly.
+- **Data retrieval** — time spent looking up the correct value on the source spreadsheet before typing it.
+
+With standard workday constraints (lunch, hourly breaks, daily distractions), a person can sustain roughly **5.5–6 hours of focused data entry per day**. At 1,454 entries that translates to:
+
+> - **Optimistic (1.5 min/entry):** 6–6.5 full workdays dedicated entirely to this task
+> - **Conservative (2.0 min/entry):** 8–8.5 full workdays
+
+**RVTool Genesis eliminates this entirely.** Upload the customer's server inventory spreadsheet, let the AI normalize and map every record to IBM Cloud VPC profiles, review the output in minutes, and download a Cloud Solution Export ready to load directly into the IBM Cloud Cost Estimator — with every AI decision documented as an auditable assumption.
 
 ## What it does
 
 1. **Upload** any customer-produced spreadsheet (Excel/CSV) listing desired virtual or bare metal servers — any column layout, freeform
-2. **AI Normalization** — a local phi4-mini model maps freeform customer columns to the RVTools schema, fills in missing data, and documents every inference as an assumption
-3. **Review** — inspect all normalized records and AI assumptions before exporting
-4. **Export** — download a standards-compliant RVTools `.xlsx` file (4 tabs: vInfo, vNetwork, vPartition, vHost) ready for the IBM Cool tool, plus a separate Assumptions Report documenting every AI decision
+2. **AI Normalization** — maps freeform customer columns to IBM VPC profiles, fills in missing data (OS images, disk sizes, IOPS tiers, regions), and documents every inference as an assumption
+3. **Review** — inspect all normalized records and AI assumptions before exporting; exclude servers, edit fields inline
+4. **Export** — download a **Cloud Solution Export** (3-sheet IBM Cloud Cost Estimator workbook), a full **RVTools Export** (22-sheet, for VCF Migration Lite), and a separate **AI Assumptions Report** documenting every decision
 
 ## Prerequisites
 
@@ -377,6 +402,17 @@ archiving.
 ---
 
 ## Changelog
+
+### feat/vpc-calculator-export
+- **Cloud Solution Export** — new 3-sheet IBM Cloud Cost Estimator workbook (Project Settings, Exceptions, Data Domains) generated directly from normalized records; eliminates the need for the intermediate `rvtools2vpc` web tool
+- **IBM VPC profile selection** — Flex-Compute (`cxf`), Flex-Balanced (`bxf`), Flex-Memory (`mxf`) chosen automatically from CPU/RAM ratio; profiles snap to nearest standard IBM VPC size
+- **OS → IBM image mapping** — 26 pattern rules map customer OS strings to the correct IBM VPC stock image (Windows Server 2008–2022, RHEL 7/8/9, SUSE, Ubuntu, Debian, CentOS/Stream, Rocky, Fedora CoreOS)
+- **Exceptions sheet** — VMs with no matching IBM VPC profile are flagged `no_matching_profile` and written to a separate Exceptions sheet, mirroring the `rvtools2vpc` tool behaviour
+- **Per-project region/zone** — IBM Cloud target region and availability zone are configured at project creation (15 regions, all standard zones) and stamped into every row of the output
+- **`POST /api/projects/{id}/export/vpc-calculator`** — new endpoint; filename `VPC_Calculator_<ProjectName>_<date>.xlsx`
+- **DB migration** `c3d4e5f6a7b8` — `vpc_region` + `vpc_datacenter` columns on `projects` table (defaults `us-south` / `us-south-1`)
+- **Export page** — Cool Tool Export card removed; VPC Calculator renamed to Cloud Solution Export; 3-card grid (Cloud Solution + RVTools + AI Assumptions)
+- **README** — "Why this tool exists" section with the manual-entry time analysis
 
 ### feat/backup-restore
 - **Project backup** — download any project as a portable `.json` bundle (normalized records + assumptions)
