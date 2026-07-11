@@ -126,7 +126,10 @@ export interface LLMTestResult {
 export const api = {
   folders: {
     list: (parentId?: string | null): Promise<{ folders: Folder[]; total: number }> => {
-      const qs = parentId !== undefined ? `?parent_id=${parentId ?? ''}` : '';
+      // parentId undefined = no filter (all); null = root level (no parent); string = that parent
+      // The API expects no param for "all", no param for root (parent_id IS NULL handled server-side),
+      // so we only append parent_id when it's a real UUID string.
+      const qs = (parentId !== undefined && parentId !== null) ? `?parent_id=${parentId}` : '';
       return fetch(`${BASE}/folders${qs}`).then(r => r.json());
     },
     create: (data: { name: string; parent_id?: string | null }): Promise<Folder> =>
