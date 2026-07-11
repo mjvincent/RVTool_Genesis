@@ -13,6 +13,36 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
+class Folder(Base):
+    """Hierarchical folder for grouping projects.
+
+    Max depth = 2 (root → customer → engagement).
+    A NULL parent_id means the folder lives at root level.
+    """
+    __tablename__ = "folders"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("folders.id", ondelete="CASCADE"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
+
+    # relationships
+    parent: Mapped["Folder | None"] = relationship(
+        "Folder", remote_side="Folder.id", back_populates="children"
+    )
+    children: Mapped[list["Folder"]] = relationship(
+        "Folder", back_populates="parent", cascade="all, delete-orphan"
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        back_populates="folder"
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -21,6 +51,10 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional folder grouping — NULL means project lives at root (ungrouped)
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True
+    )
     # IBM Cloud VPC target region — set at project creation, used by VPC Calculator export
     vpc_region: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south")
     vpc_datacenter: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south-1")
@@ -28,6 +62,7 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
     # relationships
+    folder: Mapped["Folder | None"] = relationship(back_populates="projects")
     uploads: Mapped[list["Upload"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
