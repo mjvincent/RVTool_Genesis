@@ -19,10 +19,21 @@ export const IBM_VPC_REGIONS: Record<string, { label: string; geography: string;
   'mx-qro':    { label: 'Querétaro (mx-qro)',        geography: 'North America', zones: ['mx-qro-1',   'mx-qro-2',   'mx-qro-3']   },
 };
 
+export interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+  updated_at: string;
+  project_count: number;
+  child_count: number;
+}
+
 export interface Project {
   id: string;
   name: string;
   description: string | null;
+  folder_id: string | null;
   vpc_region: string | null;
   vpc_datacenter: string | null;
   created_at: string;
@@ -113,10 +124,33 @@ export interface LLMTestResult {
 }
 
 export const api = {
+  folders: {
+    list: (parentId?: string | null): Promise<{ folders: Folder[]; total: number }> => {
+      const qs = parentId !== undefined ? `?parent_id=${parentId ?? ''}` : '';
+      return fetch(`${BASE}/folders${qs}`).then(r => r.json());
+    },
+    create: (data: { name: string; parent_id?: string | null }): Promise<Folder> =>
+      fetch(`${BASE}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then(r => r.json()),
+    rename: (id: string, name: string): Promise<Folder> =>
+      fetch(`${BASE}/folders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }).then(r => r.json()),
+    delete: (id: string): Promise<Response> =>
+      fetch(`${BASE}/folders/${id}`, { method: 'DELETE' }),
+  },
   projects: {
-    list: (): Promise<{ projects: Project[]; total: number }> =>
-      fetch(`${BASE}/projects`).then(r => r.json()),
-    create: (data: { name: string; description?: string; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
+    list: (folderId?: string | null): Promise<{ projects: Project[]; total: number }> => {
+      // folderId undefined = all projects; null = root only; string = that folder
+      const qs = folderId !== undefined ? `?folder_id=${folderId ?? 'null'}` : '';
+      return fetch(`${BASE}/projects${qs}`).then(r => r.json());
+    },
+    create: (data: { name: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
       fetch(`${BASE}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -124,7 +158,7 @@ export const api = {
       }).then(r => r.json()),
     get: (id: string): Promise<Project> =>
       fetch(`${BASE}/projects/${id}`).then(r => r.json()),
-    update: (id: string, data: { name?: string; description?: string; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
+    update: (id: string, data: { name?: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
       fetch(`${BASE}/projects/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -172,7 +206,7 @@ export const api = {
   exports: {
     // RVTools Export — 22-sheet full RVTools format (VCF Migration Lite)
     generateRVToolsPure: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/rvtools-pure`, { method: 'POST' }).then(r => r.json()),
+      fetch(`${BASE}/projects/${projectId}/export/rvtools`, { method: 'POST' }).then(r => r.json()),
     downloadRVToolsPure: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
     generateAssumptions: (projectId: string): Promise<ExportRecord> =>
