@@ -1,15 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, TextInput, TextArea, InlineNotification } from '@carbon/react';
-import { api } from '../api/client';
+import { Button, TextInput, TextArea, Select, SelectItem, InlineNotification } from '@carbon/react';
+import { api, IBM_VPC_REGIONS } from '../api/client';
 
 export default function NewProjectPage() {
   const navigate = useNavigate();
-  const [name, setName] = useState('');
+  const [name, setName]               = useState('');
   const [description, setDescription] = useState('');
-  const [nameError, setNameError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [vpcRegion, setVpcRegion]     = useState('us-south');
+  const [vpcDc, setVpcDc]             = useState('us-south-1');
+  const [nameError, setNameError]     = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState('');
+
+  // When region changes, auto-reset datacenter to zone-1 of new region
+  useEffect(() => {
+    const zones = IBM_VPC_REGIONS[vpcRegion]?.zones ?? [];
+    setVpcDc(zones[0] ?? `${vpcRegion}-1`);
+  }, [vpcRegion]);
 
   async function handleSubmit() {
     if (!name.trim()) {
@@ -22,6 +30,8 @@ export default function NewProjectPage() {
       const project = await api.projects.create({
         name: name.trim(),
         description: description.trim() || undefined,
+        vpc_region: vpcRegion,
+        vpc_datacenter: vpcDc,
       });
       navigate(`/projects/${project.id}/upload`);
     } catch {
@@ -29,6 +39,9 @@ export default function NewProjectPage() {
       setError('Failed to create project. Please try again.');
     }
   }
+
+  const regionInfo = IBM_VPC_REGIONS[vpcRegion];
+  const zones = regionInfo?.zones ?? [`${vpcRegion}-1`];
 
   return (
     <>
@@ -72,7 +85,47 @@ export default function NewProjectPage() {
             value={description}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
             rows={3}
+            style={{ marginBottom: '1.5rem' }}
           />
+
+          {/* Divider */}
+          <div style={{ borderTop: '1px solid #e0e0e0', margin: '0.5rem 0 1.5rem' }} />
+          <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#525252', marginBottom: '0.75rem' }}>
+            IBM Cloud VPC Target
+            <span style={{ fontWeight: 400, marginLeft: '0.5rem', color: '#6f6f6f' }}>
+              — used for the VPC Calculator export
+            </span>
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '0.25rem' }}>
+            <Select
+              id="vpc-region"
+              labelText="Target region"
+              value={vpcRegion}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVpcRegion(e.target.value)}
+            >
+              {Object.entries(IBM_VPC_REGIONS).map(([key, val]) => (
+                <SelectItem key={key} value={key} text={val.label} />
+              ))}
+            </Select>
+
+            <Select
+              id="vpc-datacenter"
+              labelText="Availability zone"
+              value={vpcDc}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVpcDc(e.target.value)}
+            >
+              {zones.map(z => (
+                <SelectItem key={z} value={z} text={z} />
+              ))}
+            </Select>
+          </div>
+
+          {regionInfo && (
+            <p style={{ fontSize: '0.75rem', color: '#6f6f6f', margin: '0.25rem 0 0' }}>
+              Geography: <strong>{regionInfo.geography}</strong>
+            </p>
+          )}
         </div>
 
         <div className="step-actions" style={{ borderTop: 'none', paddingTop: 0, marginTop: '1.5rem' }}>

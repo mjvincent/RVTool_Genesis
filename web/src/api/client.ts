@@ -1,9 +1,30 @@
 const BASE = '/api';
 
+// IBM Cloud VPC regions and their availability zones
+export const IBM_VPC_REGIONS: Record<string, { label: string; geography: string; zones: string[] }> = {
+  'us-south':  { label: 'Dallas (us-south)',        geography: 'North America', zones: ['us-south-1', 'us-south-2', 'us-south-3'] },
+  'us-east':   { label: 'Washington DC (us-east)',  geography: 'North America', zones: ['us-east-1',  'us-east-2',  'us-east-3']  },
+  'ca-tor':    { label: 'Toronto (ca-tor)',          geography: 'North America', zones: ['ca-tor-1',   'ca-tor-2',   'ca-tor-3']   },
+  'ca-mon':    { label: 'Montreal (ca-mon)',         geography: 'North America', zones: ['ca-mon-1',   'ca-mon-2',   'ca-mon-3']   },
+  'br-sao':    { label: 'São Paulo (br-sao)',        geography: 'South America', zones: ['br-sao-1',   'br-sao-2',   'br-sao-3']   },
+  'eu-gb':     { label: 'London (eu-gb)',            geography: 'Europe',        zones: ['eu-gb-1',    'eu-gb-2',    'eu-gb-3']    },
+  'eu-de':     { label: 'Frankfurt (eu-de)',         geography: 'Europe',        zones: ['eu-de-1',    'eu-de-2',    'eu-de-3']    },
+  'eu-es':     { label: 'Madrid (eu-es)',            geography: 'Europe',        zones: ['eu-es-1',    'eu-es-2',    'eu-es-3']    },
+  'eu-fr2':    { label: 'Paris (eu-fr2)',            geography: 'Europe',        zones: ['eu-fr2-1',   'eu-fr2-2',   'eu-fr2-3']   },
+  'jp-tok':    { label: 'Tokyo (jp-tok)',            geography: 'Asia Pacific',  zones: ['jp-tok-1',   'jp-tok-2',   'jp-tok-3']   },
+  'jp-osa':    { label: 'Osaka (jp-osa)',            geography: 'Asia Pacific',  zones: ['jp-osa-1',   'jp-osa-2',   'jp-osa-3']   },
+  'au-syd':    { label: 'Sydney (au-syd)',           geography: 'Asia Pacific',  zones: ['au-syd-1',   'au-syd-2',   'au-syd-3']   },
+  'in-che':    { label: 'Chennai (in-che)',          geography: 'Asia Pacific',  zones: ['in-che-1']                               },
+  'kr-seo':    { label: 'Seoul (kr-seo)',            geography: 'Asia Pacific',  zones: ['kr-seo-1',   'kr-seo-2']                 },
+  'mx-qro':    { label: 'Querétaro (mx-qro)',        geography: 'North America', zones: ['mx-qro-1',   'mx-qro-2',   'mx-qro-3']   },
+};
+
 export interface Project {
   id: string;
   name: string;
   description: string | null;
+  vpc_region: string | null;
+  vpc_datacenter: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,7 +116,7 @@ export const api = {
   projects: {
     list: (): Promise<{ projects: Project[]; total: number }> =>
       fetch(`${BASE}/projects`).then(r => r.json()),
-    create: (data: { name: string; description?: string }): Promise<Project> =>
+    create: (data: { name: string; description?: string; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
       fetch(`${BASE}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,6 +190,11 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/exports/assumptions/${exportId}/download`),
     getPowerVSCount: (projectId: string): Promise<{ powervs_count: number }> =>
       fetch(`${BASE}/projects/${projectId}/powervs-count`).then(r => r.json()),
+    // IBM Cloud VPC Calculator export (3-sheet: Project Settings, Exceptions, Data Domains)
+    generateVPCCalculator: (projectId: string): Promise<ExportRecord> =>
+      fetch(`${BASE}/projects/${projectId}/export/vpc-calculator`, { method: 'POST' }).then(r => r.json()),
+    downloadVPCCalculator: (projectId: string, exportId: string): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
   },
   backup: {
     downloadProject: (projectId: string, includeFile = false): Promise<Response> =>

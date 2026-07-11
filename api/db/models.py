@@ -21,6 +21,9 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # IBM Cloud VPC target region — set at project creation, used by VPC Calculator export
+    vpc_region: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south")
+    vpc_datacenter: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south-1")
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
