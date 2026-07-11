@@ -219,7 +219,7 @@ async def generate_rvtools_powervs_export(
     file_bytes = generate_rvtools_pure_xlsx(pvs_normalized, project.name)
 
     safe_name = project.name.replace(" ", "_")
-    filename = f"COOL_PowerVS_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"RVTools_PowerVS_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = RVToolsExport(
         project_id=project_id,
@@ -344,7 +344,7 @@ async def generate_vpc_calculator_export(
     )
 
     safe_name = project.name.replace(" ", "_")
-    filename = f"VPC_Calculator_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"CloudSolution_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = RVToolsExport(
         project_id=project_id,
@@ -394,7 +394,7 @@ async def generate_rvtools_pure_export(
     ]
     file_bytes = generate_rvtools_pure_xlsx(x86_normalized, project.name)
     safe_name = project.name.replace(" ", "_")
-    filename = f"COOL_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"RVTools_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     export = RVToolsExport(
         project_id=project_id,
