@@ -124,6 +124,12 @@ export const api = {
       }).then(r => r.json()),
     get: (id: string): Promise<Project> =>
       fetch(`${BASE}/projects/${id}`).then(r => r.json()),
+    update: (id: string, data: { name?: string; description?: string; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
+      fetch(`${BASE}/projects/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).then(r => r.json()),
     delete: (id: string): Promise<Response> =>
       fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }),
   },
@@ -164,14 +170,7 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }).then(r => r.json()),
   },
   exports: {
-    // Cloud Solutioning Tool export (IBM Cool / VCF Migration Lite) — 22 sheets
-    generateRVTools: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/rvtools`, { method: 'POST' }).then(r => r.json()),
-    listRVTools: (projectId: string): Promise<ExportRecord[]> =>
-      fetch(`${BASE}/projects/${projectId}/exports/rvtools`).then(r => r.json()),
-    downloadRVTools: (projectId: string, exportId: string): Promise<Response> =>
-      fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
-    // Pure RVTools export — 4 sheets (vInfo, vNetwork, vPartition, vHost)
+    // RVTools Export — 22-sheet full RVTools format (VCF Migration Lite)
     generateRVToolsPure: (projectId: string): Promise<ExportRecord> =>
       fetch(`${BASE}/projects/${projectId}/export/rvtools-pure`, { method: 'POST' }).then(r => r.json()),
     downloadRVToolsPure: (projectId: string, exportId: string): Promise<Response> =>

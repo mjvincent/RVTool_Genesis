@@ -22,3 +22,6 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Bob AI tool temp files — analysis dumps, never source code
+.bob/
