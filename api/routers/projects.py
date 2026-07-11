@@ -20,7 +20,12 @@ async def create_project(
     body: ProjectCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ProjectResponse:
-    project = Project(name=body.name, description=body.description)
+    project = Project(
+        name=body.name,
+        description=body.description,
+        vpc_region=body.vpc_region or "us-south",
+        vpc_datacenter=body.vpc_datacenter or "us-south-1",
+    )
     db.add(project)
     await db.commit()
     await db.refresh(project)
@@ -59,6 +64,10 @@ async def update_project(
         project.name = body.name
     if body.description is not None:
         project.description = body.description
+    if body.vpc_region is not None:
+        project.vpc_region = body.vpc_region
+    if body.vpc_datacenter is not None:
+        project.vpc_datacenter = body.vpc_datacenter
     await db.commit()
     await db.refresh(project)
     return ProjectResponse.model_validate(project)
