@@ -57,6 +57,7 @@ export interface ServerRecord {
   raw_data: any;
   normalized_data: any;
   server_type: string | null;
+  error_message: string | null;
   assumptions: Assumption[];
   is_excluded: boolean;
   exclusion_reason: string | null;
@@ -194,6 +195,12 @@ export const api = {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_excluded: isExcluded, exclusion_reason: reason ?? null }),
+      }).then(r => r.json()),
+    bulkOsReplace: (projectId: string, fromOs: string, toOs: string): Promise<{ updated_count: number; from_os: string; to_os: string }> =>
+      fetch(`${BASE}/projects/${projectId}/bulk-os-replace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_os: fromOs, to_os: toOs }),
       }).then(r => r.json()),
   },
   processing: {

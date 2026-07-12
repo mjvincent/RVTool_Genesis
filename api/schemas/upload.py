@@ -25,6 +25,7 @@ class ServerRecordResponse(BaseModel):
     normalized_data: dict | None
     server_type: str | None
     processing_status: str
+    error_message: str | None
     is_excluded: bool
     exclusion_reason: str | None
     created_at: datetime

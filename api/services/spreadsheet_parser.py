@@ -83,6 +83,12 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
     """Parse an uploaded spreadsheet and return a list of row dicts.
 
     Each dict uses cleaned column names as keys and JSON-serialisable values.
+    Every row also contains a reserved key ``_row_number`` (int) that holds the
+    **absolute spreadsheet row number** matching what Excel shows in its row
+    gutter (1-based, header row = 1 or 2 depending on title detection).  This
+    lets the UI display "Row 7 in your spreadsheet" on failed/incomplete records
+    so the user can locate the problem in the original file.
+
     Raises ValueError for files that cannot be parsed.
     """
     if len(file_bytes) > MAX_FILE_SIZE:
@@ -100,6 +106,10 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
 
     # --- First pass with header=0 -----------------------------------------
     df = _read_dataframe(file_bytes, filename, header_row=0)
+    # header_row_offset tracks which spreadsheet row contained the column headers.
+    # Row 1 (1-based) = header_row=0. Row 2 (1-based) = header_row=1.
+    # The first pandas data row (index 0) lives at absolute row = header_row_offset + 2.
+    header_row_offset: int = 0  # header was row 1 (0-based index 0)
 
     # Detect title row: if the first data row has fewer than 2 non-null values
     # the presumed "header" (row 0) is likely a title / banner row.
@@ -114,6 +124,7 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
                 non_null_headers,
             )
             df = _read_dataframe(file_bytes, filename, header_row=1)
+            header_row_offset = 1  # header was row 2 (0-based index 1)
 
     # --- Clean column names ---------------------------------------------------
     renamed: dict[Any, str | None] = {col: _clean_column_name(col) for col in df.columns}
@@ -137,11 +148,17 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
 
     # --- Convert values -------------------------------------------------------
     rows: list[dict] = []
-    for _, row in df.iterrows():
+    for pandas_idx, row in df.iterrows():
         record = {col: _to_python(val) for col, val in row.items()}
         # Skip rows that are entirely None after conversion
         if all(v is None for v in record.values()):
             continue
+        # Absolute Excel row number: pandas index is 0-based from the first data
+        # row after the header. Add header_row_offset (0 or 1 for title skip),
+        # +1 for the header row itself, +1 to convert from 0-based to 1-based,
+        # then +1 more because pandas index 0 is the row immediately after header.
+        # Formula: abs_row = pandas_idx + header_row_offset + 2
+        record["_row_number"] = int(pandas_idx) + header_row_offset + 2
         rows.append(record)
 
     logger.info("Parsed %d rows from '%s'", len(rows), filename)
