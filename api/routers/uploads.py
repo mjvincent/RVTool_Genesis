@@ -271,7 +271,13 @@ async def patch_record(
 
     Accepts a flat dict of vinfo field overrides (e.g. {"vm_name": "new-name", "cpus": 4}).
     Merges them into the existing normalized_data.vinfo without touching other sub-keys.
+
+    If the record's processing_status is 'error' (AI normalization failed), applying a
+    manual edit promotes it to 'complete' and clears the error_message so it graduates
+    out of the failed-records panel without needing a re-run of the AI.
     """
+    import copy
+
     await _get_project_or_404(db, project_id)
     result = await db.execute(
         select(ServerRecord).where(
@@ -283,22 +289,25 @@ async def patch_record(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Record {record_id} not found")
 
-    if not record.normalized_data:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Record has not been normalized yet",
-        )
-
-    import copy
-    updated = copy.deepcopy(record.normalized_data)
-
     # Accept top-level vinfo overrides
     vinfo_overrides = body.get("vinfo", body)  # support both {"vinfo": {...}} and flat dict
     if not isinstance(vinfo_overrides, dict):
         raise HTTPException(status_code=422, detail="Body must be a JSON object")
 
-    updated.setdefault("vinfo", {}).update(vinfo_overrides)
-    record.normalized_data = updated
+    # For failed records with no normalized_data, bootstrap a minimal structure
+    base = copy.deepcopy(record.normalized_data) if record.normalized_data else {
+        "vinfo": {}, "vnetwork": [], "vpartition": [], "vhost": {}
+    }
+    base.setdefault("vinfo", {}).update(vinfo_overrides)
+    record.normalized_data = base
+
+    # If this was a failed record, promote it to complete on manual save
+    if record.processing_status == "error":
+        record.processing_status = "complete"
+        record.error_message = None
+        logger.info(
+            "Record %s manually edited — promoted from error → complete", record_id
+        )
 
     await db.commit()
     await db.refresh(record)
