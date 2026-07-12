@@ -3,7 +3,7 @@ import {
   DataTable, DataTableSkeleton, Table, TableHead, TableRow, TableHeader,
   TableBody, TableCell, TableContainer, TableToolbar, TableToolbarContent,
   TableToolbarSearch, TableExpandRow, TableExpandedRow, TableExpandHeader,
-  Tag, Pagination, Button, InlineLoading, InlineNotification, Checkbox, TextInput,
+  Tag, Pagination, Button, InlineLoading, Checkbox, TextInput,
 } from '@carbon/react';
 import { Renew, WarningAlt, Edit } from '@carbon/icons-react';
 import { api, ServerRecord, Assumption } from '../api/client';
@@ -152,22 +152,11 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
   if (loading) return <DataTableSkeleton columnCount={8} rowCount={8} />;
   if (visibleRecords.length === 0) return null;
 
-  const failedCount = visibleRecords.filter(r => r.processing_status === 'error' || r.status === 'error').length;
   const powervsCount = visibleRecords.filter(r => (r.server_type ?? safeGet(r.normalized_data, 'server_type')) === 'powervs').length;
   const excludedCount = visibleRecords.filter(r => r.is_excluded).length;
 
   return (
     <>
-      {failedCount > 0 && (
-        <InlineNotification
-          kind="warning"
-          title={`${failedCount} record${failedCount !== 1 ? 's' : ''} failed normalization`}
-          subtitle="Use the Retry button on each failed row to reprocess it."
-          lowContrast
-          style={{ marginBottom: '1rem' }}
-        />
-      )}
-
       {/* Summary bar — PowerVS + Excluded counts */}
       {(powervsCount > 0 || excludedCount > 0) && (
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
