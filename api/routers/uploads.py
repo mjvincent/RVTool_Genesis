@@ -367,3 +367,91 @@ async def list_assumptions(
         assumptions=[AssumptionResponse.model_validate(a) for a in assumptions],
         total=len(assumptions),
     )
+
+
+# ---------------------------------------------------------------------------
+# Bulk OS replace endpoint
+# ---------------------------------------------------------------------------
+
+class BulkOsReplaceBody(BaseModel):
+    from_os: str
+    to_os: str
+
+
+class BulkOsReplaceResponse(BaseModel):
+    updated_count: int
+    from_os: str
+    to_os: str
+
+
+@router.post(
+    "/projects/{project_id}/bulk-os-replace",
+    response_model=BulkOsReplaceResponse,
+)
+async def bulk_os_replace(
+    project_id: uuid.UUID,
+    body: BulkOsReplaceBody,
+    db: AsyncSession = Depends(get_db),
+) -> BulkOsReplaceResponse:
+    """Replace the OS on all non-excluded, normalized records where os_config matches from_os.
+
+    Updates both os_config and os_vmware_tools in normalized_data.vinfo.
+    Inserts one Assumption row per updated record documenting the change.
+    """
+    import copy
+    import uuid as _uuid
+    from datetime import datetime
+
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.is_excluded == False,  # noqa: E712
+        )
+    )
+    records = result.scalars().all()
+
+    updated_count = 0
+    for record in records:
+        if not record.normalized_data:
+            continue
+        vinfo = record.normalized_data.get("vinfo", {})
+        if vinfo.get("os_config") != body.from_os:
+            continue
+
+        # Update the normalized data
+        updated = copy.deepcopy(record.normalized_data)
+        updated.setdefault("vinfo", {})["os_config"] = body.to_os
+        updated["vinfo"]["os_vmware_tools"] = body.to_os
+        record.normalized_data = updated
+
+        # Insert assumption documenting the change
+        assumption = Assumption(
+            id=_uuid.uuid4(),
+            server_record_id=record.id,
+            project_id=project_id,
+            field_name="vinfo/os_config",
+            assumed_value=body.to_os,
+            original_value=body.from_os,
+            reasoning=(
+                f"User-initiated bulk OS replacement for pricing purposes: "
+                f"'{body.from_os}' → '{body.to_os}'."
+            ),
+            confidence="medium",
+            created_at=datetime.utcnow(),
+        )
+        db.add(assumption)
+        updated_count += 1
+
+    await db.commit()
+    logger.info(
+        "Bulk OS replace: project %s — '%s' → '%s' (%d records updated)",
+        project_id, body.from_os, body.to_os, updated_count,
+    )
+    return BulkOsReplaceResponse(
+        updated_count=updated_count,
+        from_os=body.from_os,
+        to_os=body.to_os,
+    )
