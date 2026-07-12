@@ -561,7 +561,11 @@ def _sanitize_numeric_fields(result: dict) -> dict:
             net_assumptions = get_network_assumptions(vm_name, idx, provided_ip=None if is_placeholder else ipv4)
             new_assumptions.extend(net_assumptions)
 
-    result["assumptions"] = list(result.get("assumptions") or []) + new_assumptions
+    # Guard: ensure every element in the merged assumptions list is a dict
+    # so downstream code can safely call .get() on each item.
+    raw_assumptions = list(result.get("assumptions") or [])
+    safe_assumptions = [a for a in raw_assumptions if isinstance(a, dict)]
+    result["assumptions"] = safe_assumptions + new_assumptions
     return result
 
 

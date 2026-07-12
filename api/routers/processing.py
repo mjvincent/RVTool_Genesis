@@ -107,6 +107,14 @@ async def _process_single_record(record_id: uuid.UUID, project_id: uuid.UUID) ->
                 await db.delete(old)
 
             for assumption_data in normalized.get("assumptions", []):
+                # Guard: LLM occasionally returns strings instead of dicts in
+                # the assumptions list — skip anything that isn't a mapping.
+                if not isinstance(assumption_data, dict):
+                    logger.warning(
+                        "Skipping non-dict assumption item for record %s: %r",
+                        record_id, assumption_data
+                    )
+                    continue
                 assumption = Assumption(
                     server_record_id=record_id,
                     project_id=project_id,
