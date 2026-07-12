@@ -131,21 +131,31 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
     const cpus    = safeGet(nd, 'vinfo.cpus', 'vinfo.cpu_count');
     const memMb   = safeGet(nd, 'vinfo.memory_mb');
     const diskMb  = safeGet(nd, 'vinfo.provisioned_mb');
-    const os      = safeGet(nd, 'vinfo.os_config') ?? (isFailed ? '—' : '—');
+    const os      = safeGet(nd, 'vinfo.os_config') ?? '';
     const asmCount = (r.assumptions ?? []).length;
+
+    // Count missing critical fields for non-failed complete records
+    const missingCount = isFailed ? 0 : [
+      safeGet(nd, 'vinfo.vm_name'),
+      safeGet(nd, 'vinfo.cpus'),
+      safeGet(nd, 'vinfo.memory_mb'),
+      safeGet(nd, 'vinfo.provisioned_mb'),
+      safeGet(nd, 'vinfo.os_config'),
+    ].filter(v => v == null || v === '' || v === 0).length;
 
     return {
       id: r.id,
-      vm_name:     vmName,
-      server_type: isFailed ? 'error' : type,
-      cpus:        cpus != null ? String(cpus) : '—',
-      memory_gb:   mbToGb(memMb),
-      storage_gb:  mbToGb(diskMb),
-      os:          String(os).replace(/ \(64-bit\)/i, ''),
-      exclude_col: r.is_excluded ? 'excluded' : 'active',
-      status_col:  isFailed ? 'error' : asmCount,
-      _record:     r,
-      _isFailed:   isFailed,
+      vm_name:        vmName,
+      server_type:    isFailed ? 'error' : type,
+      cpus:           cpus != null ? String(cpus) : '—',
+      memory_gb:      mbToGb(memMb),
+      storage_gb:     mbToGb(diskMb),
+      os:             os ? String(os).replace(/ \(64-bit\)/i, '') : '—',
+      exclude_col:    r.is_excluded ? 'excluded' : 'active',
+      status_col:     isFailed ? 'error' : asmCount,
+      _record:        r,
+      _isFailed:      isFailed,
+      _missingCount:  missingCount,
     };
   });
 
@@ -280,28 +290,48 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
 
                           // ── AI Decisions column ──────────────────────────
                           if (cell.info.header === 'status_col') {
+                            const missingCount = (row as any)._missingCount ?? 0;
                             if (cell.value === 'error') {
                               return (
                                 <TableCell key={cell.id}>
-                                  {isRetrying ? (
-                                    <InlineLoading description="Retrying…" />
-                                  ) : (
-                                    <Button
-                                      kind="ghost"
-                                      size="sm"
-                                      renderIcon={Renew}
-                                      onClick={() => handleRetry(row.id)}
-                                    >
-                                      Retry
-                                    </Button>
-                                  )}
+                                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    {isRetrying ? (
+                                      <InlineLoading description="Retrying…" />
+                                    ) : (
+                                      <>
+                                        <Button kind="ghost" size="sm" renderIcon={Renew} onClick={() => handleRetry(row.id)}>
+                                          Retry
+                                        </Button>
+                                        <Button kind="ghost" size="sm" renderIcon={Edit} onClick={() => setEditTarget(original)}>
+                                          Edit
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
                                 </TableCell>
                               );
                             }
+                            // Amber "N missing" badge for incomplete normalized records
+                            const missingBadge = missingCount > 0 ? (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                fontSize: '0.75rem', color: '#8a3800',
+                                background: '#fff8e1', border: '1px solid #f1c21b',
+                                borderRadius: 12, padding: '0.1rem 0.5rem', marginRight: '0.4rem',
+                              }}>
+                                ⚠ {missingCount} missing
+                              </span>
+                            ) : null;
+
                             const count = cell.value as number;
-                            if (count === 0) return <TableCell key={cell.id}><span style={{ color: '#8d8d8d' }}>—</span></TableCell>;
+                            if (count === 0) return (
+                              <TableCell key={cell.id}>
+                                {missingBadge ?? <span style={{ color: '#8d8d8d' }}>—</span>}
+                              </TableCell>
+                            );
                             return (
                               <TableCell key={cell.id}>
+                                {missingBadge}
                                 <button
                                   className="assumption-badge"
                                   onClick={() => onViewAssumptions(
@@ -327,17 +357,60 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
                               <WarningAlt size={16} style={{ color: '#da1e28' }} />
                               <strong style={{ fontSize: '0.875rem', color: '#da1e28' }}>Normalization failed</strong>
+                              {original?.raw_data?._row_number != null && (
+                                <span style={{ fontSize: '0.75rem', color: '#6f6f6f', marginLeft: '0.5rem' }}>
+                                  Source: Row {original.raw_data._row_number} in your spreadsheet
+                                </span>
+                              )}
                             </div>
                             {retryError && (
                               <p style={{ fontSize: '0.8125rem', color: '#da1e28', margin: '0 0 0.5rem' }}>{retryError}</p>
                             )}
-                            <p style={{ fontSize: '0.8125rem', color: '#525252', margin: 0 }}>
-                              Raw data keys: {Object.keys(original?.raw_data ?? {}).join(', ') || '(empty)'}
+                            <p style={{ fontSize: '0.8125rem', color: '#525252', margin: '0 0 0.75rem' }}>
+                              Use Retry to let the AI try again, or click Edit to enter the values manually.
                             </p>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <Button kind="danger--ghost" size="sm" renderIcon={Renew} onClick={() => handleRetry(row.id)}>
+                                Retry normalization
+                              </Button>
+                              <Button kind="primary" size="sm" renderIcon={Edit} onClick={() => setEditTarget(original)}>
+                                Edit manually
+                              </Button>
+                            </div>
                           </div>
                         ) : (
                           <div>
+                            {/* Missing-fields call-to-action */}
+                            {((row as any)._missingCount > 0) && (
+                              <div style={{
+                                padding: '0.75rem 1.25rem',
+                                background: '#fff8e1',
+                                borderBottom: '1px solid #f1c21b',
+                                display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap',
+                              }}>
+                                <WarningAlt size={16} style={{ color: '#8a3800', flexShrink: 0, marginTop: 2 }} />
+                                <div style={{ flex: 1 }}>
+                                  <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 600, color: '#8a3800' }}>
+                                    {(row as any)._missingCount} critical field{(row as any)._missingCount !== 1 ? 's' : ''} could not be determined
+                                  </p>
+                                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.8125rem', color: '#525252' }}>
+                                    {original?.raw_data?._row_number != null
+                                      ? `Refer to Row ${original.raw_data._row_number} in your spreadsheet and click "Edit this record" to fill in the missing values.`
+                                      : 'Open the original spreadsheet and click "Edit this record" to fill in the missing values.'
+                                    }
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="record-detail">
+                              {/* Source row number */}
+                              {original?.raw_data?._row_number != null && (
+                                <div className="record-detail-field">
+                                  <label>Source Row</label>
+                                  <span style={{ color: '#0043ce' }}>Row {original.raw_data._row_number} in your spreadsheet</span>
+                                </div>
+                              )}
                               {[
                                 ['Datacenter',  safeGet(nd, 'vinfo.datacenter')],
                                 ['Cluster',     safeGet(nd, 'vinfo.cluster')],
@@ -379,7 +452,7 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
 
                             <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #e0e0e0' }}>
                               <Button
-                                kind="ghost"
+                                kind={(row as any)._missingCount > 0 ? 'primary' : 'ghost'}
                                 size="sm"
                                 renderIcon={Edit}
                                 onClick={() => setEditTarget(original)}
