@@ -42,7 +42,7 @@ VMEMORY_HEADERS = [
 
 VDISK_HEADERS = [
     "VM", "Powerstate", "Template", "Disk", "Disk Mode",
-    "Capacity MB", "Disk Path", "Thin", "Datacenter", "Cluster", "Host",
+    "Capacity MiB", "Disk Path", "Thin", "Datacenter", "Cluster", "Host",
     "OS according to the configuration file", "OS according to the VMware Tools",
 ]
 
@@ -371,7 +371,9 @@ def generate_rvtools_xlsx(
 
         # --- vNetwork ---
         for nic in vnetwork_list:
-            if nic is None:
+            # Guard: LLM occasionally returns strings instead of dicts in the
+            # vnetwork list — skip anything that isn't a mapping.
+            if not isinstance(nic, dict):
                 continue
             sheets["vNetwork"].append([
                 vm_name, powerstate, template,
