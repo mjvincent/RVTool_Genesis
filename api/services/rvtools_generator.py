@@ -297,7 +297,10 @@ def generate_rvtools_xlsx(
         vm_name    = _get(vinfo, "vm_name")
         powerstate = _get(vinfo, "powerstate", "poweredOn")
         template   = _get(vinfo, "template", False)
-        os_cfg     = _get(vinfo, "os_config")
+        # For PowerVS records, use the IBM Cool OS family string in "OS according to the
+        # configuration file" column so IBM Cool applies the correct pricing tier.
+        # vinfo["powervs_os_family"] is set by ai_normalizer._map_powervs_os_family().
+        os_cfg     = _get(vinfo, "powervs_os_family") or _get(vinfo, "os_config")
         os_tools   = _get(vinfo, "os_vmware_tools")
         datacenter = _get(vinfo, "datacenter")
         cluster    = _get(vinfo, "cluster")
@@ -513,6 +516,10 @@ def generate_rvtools_pure_xlsx(records: list[dict], project_name: str) -> bytes:
 
         # --- vInfo (one row per VM) ---
         if vinfo:
+            # For PowerVS records, write the IBM Cool OS family string to the
+            # "OS according to the configuration file" column.  This ensures IBM Cool
+            # reads the correct pricing tier (AIX, IBM i, SAP Red Hat, etc.).
+            pvs_os = _get(vinfo, "powervs_os_family") or _get(vinfo, "os_config")
             ws_vinfo.append([
                 _get(vinfo, "vm_name"),
                 _get(vinfo, "powerstate"),
@@ -526,7 +533,7 @@ def generate_rvtools_pure_xlsx(records: list[dict], project_name: str) -> bytes:
                 _get(vinfo, "datacenter"),
                 _get(vinfo, "cluster"),
                 _get(vinfo, "host"),
-                _get(vinfo, "os_config"),
+                pvs_os,
                 _get(vinfo, "os_vmware_tools"),
             ])
 
