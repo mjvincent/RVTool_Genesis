@@ -563,12 +563,68 @@ def _sanitize_numeric_fields(result: dict) -> dict:
             mem_val = corrected
         vinfo["memory_mb"] = _clamp_mb(mem_val, "vinfo/memory_mb", new_assumptions, _MAX_RAM_MB)
 
-        # Capture original provisioned_mb before any IBM VPC clamping so we can
-        # recalculate in_use_mb consistently afterwards.
+        # ── Disk unit detection ───────────────────────────────────────────────
+        # Customer spreadsheets frequently label disk columns as "Disk (GB)" or
+        # "Storage (GB)".  The LLM is instructed to multiply GB×1024 but often
+        # passes the raw GB number directly as provisioned_mb.  We cross-check
+        # the LLM's value against any raw GB column in the source data and
+        # correct when the LLM value is implausibly small relative to the raw GB.
+        #
+        # Detection heuristic: if the raw_data dict contains a key whose name
+        # contains "GB" (case-insensitive) and the value is a positive number,
+        # and the LLM's provisioned_mb is less than (raw_gb × 512) — i.e., the
+        # LLM appears to have treated GB as MB — we override with raw_gb × 1024.
+        raw_data_ref = result.get("_raw_data") or {}
+        _corrected_from_raw_gb = False
+        for raw_key, raw_val in raw_data_ref.items():
+            key_lower = str(raw_key).lower()
+            if "gb" in key_lower and ("disk" in key_lower or "storage" in key_lower or "provisioned" in key_lower):
+                try:
+                    raw_gb_val = float(raw_val)
+                except (TypeError, ValueError):
+                    continue
+                if raw_gb_val <= 0:
+                    continue
+                raw_as_mb = raw_gb_val * 1024
+                llm_prov = float(vinfo.get("provisioned_mb") or 0)
+                # If LLM value is < half of what raw_gb×1024 would be, the LLM
+                # almost certainly passed the GB number straight through as MB.
+                if llm_prov < raw_as_mb * 0.5:
+                    corrected_mb = int(raw_as_mb)
+                    logger.warning(
+                        "Disk unit mismatch detected for '%s': LLM gave %s MB but raw "
+                        "'%s'=%s GB → correcting to %d MB",
+                        vinfo.get("vm_name"), llm_prov, raw_key, raw_gb_val, corrected_mb,
+                    )
+                    new_assumptions.append({
+                        "field_name": "vinfo/provisioned_mb",
+                        "assumed_value": str(corrected_mb),
+                        "original_value": str(int(llm_prov)),
+                        "reasoning": (
+                            f"LLM returned provisioned_mb={int(llm_prov)} which appears to be "
+                            f"the raw GB value ({raw_gb_val} GB) passed through without "
+                            f"converting to MB. Corrected to {corrected_mb} MB "
+                            f"({round(raw_gb_val, 1)} GB × 1024) using raw column '{raw_key}'."
+                        ),
+                        "confidence": "high",
+                    })
+                    vinfo["provisioned_mb"] = corrected_mb
+                    _corrected_from_raw_gb = True
+                    break  # first matching GB column wins
+
+        # Capture original provisioned_mb (the true full disk size, pre-IBM-VPC-clamping)
+        # and persist it as total_disk_mb so the vpc_calculator_generator can use the
+        # full customer disk size to compute the Data Volume correctly even after the
+        # boot disk is capped to 250 GB.
         original_prov = int(vinfo.get("provisioned_mb") or 0)
 
         vinfo["provisioned_mb"]  = _clamp_mb(vinfo.get("provisioned_mb", 0),  "vinfo/provisioned_mb",  new_assumptions, _MAX_DISK_MB)
         vinfo["in_use_mb"]       = _clamp_mb(vinfo.get("in_use_mb", 0),       "vinfo/in_use_mb",       new_assumptions, _MAX_DISK_MB)
+
+        # Store the full customer disk size BEFORE IBM VPC boot clamping.
+        # This value is used by vpc_calculator_generator to compute Data Volume size:
+        #   data_gb = max(0, total_disk_gb - 250)
+        vinfo["total_disk_mb"] = vinfo["provisioned_mb"]
 
         # IBM Cloud VPC boot volume constraints (applies to x86 VSIs only).
         # We clamp here at normalisation time so the adjustment is visible in the
@@ -1178,7 +1234,12 @@ def normalize_record(raw_data: dict) -> dict:
         logger.warning("LLM response missing vinfo — using Python synthesizer")
         return _synthesize_from_raw(raw_data)
 
+    # Stash the original raw_data on the result so _sanitize_numeric_fields can
+    # cross-check disk/memory units against the raw column names/values.
+    # Removed immediately after sanitization so it never reaches the DB.
+    result["_raw_data"] = raw_data
     result = _sanitize_numeric_fields(result)
+    result.pop("_raw_data", None)
 
     # ── PowerVS post-processor: override server_type and map IBM Cool OS family ──
     # The LLM should already return "powervs" per the prompt, but we enforce it
