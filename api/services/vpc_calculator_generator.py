@@ -472,8 +472,14 @@ def generate_vpc_calculator_xlsx(
         cpus       = int(vinfo.get("num_cpus") or vinfo.get("cpus") or 1)
         mem_mb     = int(vinfo.get("memory_mb") or vinfo.get("memory") or 4096)
         mem_gb     = max(1, round(mem_mb / 1024))
-        prov_mb    = int(vinfo.get("provisioned_mb") or mem_mb)
-        prov_gb    = max(1, round(prov_mb / 1024))
+        # provisioned_mb = boot disk (already IBM-VPC-clamped to 100–250 GB at normalize time).
+        # total_disk_mb  = the customer's FULL original disk size before IBM VPC clamping.
+        #                  This is what we use to compute the Data Volume overflow.
+        #                  Falls back to provisioned_mb for records normalized before this field existed.
+        prov_mb  = int(vinfo.get("provisioned_mb") or mem_mb)
+        total_mb = int(vinfo.get("total_disk_mb") or prov_mb)
+        prov_gb  = max(1, round(prov_mb / 1024))
+        total_gb = max(1, round(total_mb / 1024))
         os_config  = vinfo.get("os_config") or vinfo.get("os_vmware_tools") or ""
         is_bm      = server_type == "bare_metal"
 
@@ -485,14 +491,18 @@ def generate_vpc_calculator_xlsx(
         # but we re-apply the clamping here so the export is always correct even for
         # records normalized before this logic was deployed.
         boot_gb = max(100, min(250, prov_gb))
-        # Anything beyond 250 GB becomes a separate Data Volume
-        data_gb = max(0, prov_gb - 250)
+        # Data volume = anything beyond 250 GB, computed from the FULL original disk size.
+        # Using total_gb here (not prov_gb) ensures records where provisioned_mb was
+        # already clamped to 250 GB still produce the correct overflow data volume.
+        data_gb = max(0, total_gb - 250)
 
-        # Issues column: flag only when clamping actually occurred
+        # Issues column: flag only when clamping actually occurred.
+        # Use total_gb (full original disk) for the > 250 check so records whose
+        # provisioned_mb was already clamped to 250 GB still get the flag.
         issues_parts: list[str] = []
-        if prov_gb < 100:
+        if total_gb < 100:
             issues_parts.append("boot_clamped_100")
-        elif prov_gb > 250:
+        elif total_gb > 250:
             issues_parts.append("boot_clamped_250")
         if no_profile:
             issues_parts.append("no_matching_profile")
