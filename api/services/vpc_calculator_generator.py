@@ -102,7 +102,20 @@ def _select_vpc_profile(cpus: int, ram_gb: int) -> tuple[str, str, str]:
 
 _OS_IMAGE_MAP: list[tuple[str, str, str]] = [
     # (substring_match_lower, os_family_name, ibm_image_id)
-    # Windows
+    # First match wins — more specific entries must come before generic fallbacks.
+
+    # ── SAP / SQL Server variants — must precede generic RHEL / SUSE / Windows ──
+    # RHEL for SAP (PLACEHOLDER image IDs — verify against IBM Cloud catalog)
+    ("red hat enterprise linux for sap",     "Red Hat Enterprise Linux for SAP", "ibm-redhat-9-2-sap-hana-amd64-3"),  # PLACEHOLDER
+    ("rhel for sap",                         "Red Hat Enterprise Linux for SAP", "ibm-redhat-9-2-sap-hana-amd64-3"),  # PLACEHOLDER
+    # SUSE for SAP (PLACEHOLDER image IDs — verify against IBM Cloud catalog)
+    ("suse linux enterprise server for sap", "SUSE Linux Enterprise Server for SAP", "ibm-sles-15-5-sap-hana-amd64-1"),  # PLACEHOLDER
+    ("sles for sap",                         "SUSE Linux Enterprise Server for SAP", "ibm-sles-15-5-sap-hana-amd64-1"),  # PLACEHOLDER
+    # Windows with SQL Server (PLACEHOLDER image IDs — verify against IBM Cloud catalog)
+    ("windows server with sql server",       "Windows Server with SQL Server", "ibm-windows-server-2022-sql-2022-amd64-1"),  # PLACEHOLDER
+    ("microsoft windows server with sql",    "Windows Server with SQL Server", "ibm-windows-server-2022-sql-2022-amd64-1"),  # PLACEHOLDER
+
+    # ── Windows Server ────────────────────────────────────────────────────────
     ("windows server 2022",  "Windows Server", "ibm-windows-server-2022-amd64-9"),
     ("windows server 2019",  "Windows Server", "ibm-windows-server-2019-amd64-11"),
     ("windows server 2016",  "Windows Server", "ibm-windows-server-2016-amd64-12"),
@@ -464,11 +477,23 @@ def generate_vpc_calculator_xlsx(
         os_config  = vinfo.get("os_config") or vinfo.get("os_vmware_tools") or ""
         is_bm      = server_type == "bare_metal"
 
-        _, os_image = _map_os_to_image(os_config)
+        os_family, os_image = _map_os_to_image(os_config)
         category, family, no_profile = _select_vpc_profile(cpus, mem_gb)
 
-        # Issues column: always flag boot_increased (IBM VPC boot < on-prem provisioned)
-        issues_parts = ["boot_increased"]
+        # IBM Cloud VPC boot volume: 100 GB minimum, 250 GB maximum.
+        # provisioned_mb is already clamped at normalisation time (ai_normalizer.py),
+        # but we re-apply the clamping here so the export is always correct even for
+        # records normalized before this logic was deployed.
+        boot_gb = max(100, min(250, prov_gb))
+        # Anything beyond 250 GB becomes a separate Data Volume
+        data_gb = max(0, prov_gb - 250)
+
+        # Issues column: flag only when clamping actually occurred
+        issues_parts: list[str] = []
+        if prov_gb < 100:
+            issues_parts.append("boot_clamped_100")
+        elif prov_gb > 250:
+            issues_parts.append("boot_clamped_250")
         if no_profile:
             issues_parts.append("no_matching_profile")
         issues_str = ",".join(issues_parts)
@@ -479,7 +504,7 @@ def generate_vpc_calculator_xlsx(
         _set(cmp_row, "Compute name",              vm_name)
         _set(cmp_row, "Number of instances",       1)
         _set(cmp_row, "Billing Type",              "PAYG")
-        _set(cmp_row, "Boot Volume Size (GB)",     10)
+        _set(cmp_row, "Boot Volume Size (GB)",     boot_gb)
         _set(cmp_row, "IOPS",                      3)
         _set(cmp_row, "Requirement Type",          "Compute")
         _set(cmp_row, "Data Center",               vpc_datacenter)
@@ -487,6 +512,7 @@ def generate_vpc_calculator_xlsx(
         _set(cmp_row, "Confidential Computing",    "No")
         _set(cmp_row, "Compute Server Type",       "Bare Metal Server" if is_bm else "Virtual Server")
         _set(cmp_row, "Feature VS",                "{}")
+        _set(cmp_row, "Operating System VS",       os_family)
         _set(cmp_row, "Operating System Version VS", os_image)
         if not no_profile:
             _set(cmp_row, "Compute Category VS",  category)
@@ -498,15 +524,17 @@ def generate_vpc_calculator_xlsx(
         if no_profile:
             exception_rows.append(list(cmp_row))  # copy
 
-        # Data Volume row (one per VM — provisioned disk size)
-        dv_row = _ps_row(len(PS_HEADERS))
-        _set(dv_row, "IOPS",                  3)
-        _set(dv_row, "Data Volume Size (GB)", prov_gb)
-        _set(dv_row, "Requirement Type",      "Data Volume")
-        _set(dv_row, "Geography",             geography)
-        _set(dv_row, "Region",                vpc_region)
-        _set(dv_row, "Data Center",           vpc_datacenter)
-        ps_ws.append(dv_row)
+        # Data Volume row — only written when provisioned disk exceeds the 250 GB boot cap.
+        # data_gb = 0 when prov_gb <= 250, so no unnecessary data volume rows are created.
+        if data_gb > 0:
+            dv_row = _ps_row(len(PS_HEADERS))
+            _set(dv_row, "IOPS",                  3)
+            _set(dv_row, "Data Volume Size (GB)", data_gb)
+            _set(dv_row, "Requirement Type",      "Data Volume")
+            _set(dv_row, "Geography",             geography)
+            _set(dv_row, "Region",                vpc_region)
+            _set(dv_row, "Data Center",           vpc_datacenter)
+            ps_ws.append(dv_row)
 
     # Style all data rows
     for row_cells in ps_ws.iter_rows(min_row=2):
