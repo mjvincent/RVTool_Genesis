@@ -83,18 +83,86 @@ def _synthesize_vhost(vm_name: str, datacenter: str, cluster: str, memory_mb: in
 
 
 # ---------------------------------------------------------------------------
-# PowerVS OS detection — AIX and IBM i workloads → PowerVS designation
+# PowerVS OS detection — AIX, IBM i, and Linux-on-Power → PowerVS designation
 # ---------------------------------------------------------------------------
 
-# Case-insensitive substrings that indicate an IBM Power workload.
-# Any OS string matching one of these causes server_type to be forced to "powervs".
-_POWERVS_OS_PATTERNS = ["aix", "ibm i", "ibmi", "i/os", "os/400", "ibm os/400"]
+# Simple substring patterns (fast path for the most common cases).
+_POWERVS_OS_SIMPLE = ["aix", "ibm i", "ibmi", "i/os", "os/400", "ibm os/400",
+                      "linux byol", "linux on power", "power linux",
+                      "sap red hat", "sap redhat", "red hat gp",
+                      "sap suse", "sap sles", "suse gp"]
+
+# Regex patterns for variants that need flexible matching.
+_POWERVS_OS_REGEX: list[re.Pattern[str]] = [
+    re.compile(r"rhel.*power",          re.IGNORECASE),
+    re.compile(r"red\s*hat.*power",     re.IGNORECASE),
+    re.compile(r"red\s*hat\s*gp",       re.IGNORECASE),
+    re.compile(r"sap\s*red\s*hat",      re.IGNORECASE),
+    re.compile(r"sap\s*redhat",         re.IGNORECASE),
+    re.compile(r"sap\s*suse",           re.IGNORECASE),
+    re.compile(r"sap\s*sles",           re.IGNORECASE),
+    re.compile(r"suse.*power",          re.IGNORECASE),
+    re.compile(r"suse\s*gp",            re.IGNORECASE),
+    re.compile(r"sles.*power",          re.IGNORECASE),
+    re.compile(r"linux\s*byol",         re.IGNORECASE),
+    re.compile(r"linux\s*on\s*power",   re.IGNORECASE),
+    re.compile(r"power\s*linux",        re.IGNORECASE),
+    re.compile(r"sap\s*hana",           re.IGNORECASE),
+]
 
 
 def _is_powervs_os(os_str: str) -> bool:
-    """Return True if the OS string indicates an AIX or IBM i workload."""
+    """Return True if the OS string indicates an AIX, IBM i, or Linux-on-Power workload.
+
+    Covers all 8 IBM Cool PowerVS OS families:
+    AIX | IBM i | IBM i MOL | Linux BYOL | SAP SUSE | SAP Red Hat | Red Hat GP | SUSE GP
+    """
     lower = os_str.lower()
-    return any(pat in lower for pat in _POWERVS_OS_PATTERNS)
+    if any(pat in lower for pat in _POWERVS_OS_SIMPLE):
+        return True
+    return any(pat.search(os_str) for pat in _POWERVS_OS_REGEX)
+
+
+# ---------------------------------------------------------------------------
+# PowerVS OS family mapper — maps OS strings to the 8 IBM Cool PowerVS families
+# ---------------------------------------------------------------------------
+
+# Ordered patterns — first match wins.  More specific entries come before general ones.
+_POWERVS_FAMILY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # IBM i MOL (must precede generic IBM i)
+    (re.compile(r"ibm\s*i\s*mol|i\s*mol",                          re.IGNORECASE), "IBM i MOL"),
+    # IBM i
+    (re.compile(r"ibm\s*i\b|ibmi\b|i/os|os/400",                   re.IGNORECASE), "IBM i"),
+    # SAP Red Hat (must precede generic Red Hat GP)
+    (re.compile(r"sap\s*red\s*hat|sap\s*redhat|red\s*hat.*sap|rhel.*sap|sap\s*hana",
+                re.IGNORECASE), "SAP Red Hat"),
+    # SAP SUSE (must precede generic SUSE GP)
+    (re.compile(r"sap\s*suse|sap\s*sles|suse.*sap|sles.*sap",      re.IGNORECASE), "SAP SUSE"),
+    # Red Hat GP
+    (re.compile(r"red\s*hat.*power|rhel.*power|red\s*hat\s*gp",    re.IGNORECASE), "Red Hat GP"),
+    # SUSE GP
+    (re.compile(r"suse.*power|sles.*power|suse\s*gp",              re.IGNORECASE), "SUSE GP"),
+    # AIX (any version)
+    (re.compile(r"\baix\b",                                         re.IGNORECASE), "AIX"),
+    # Linux BYOL — any other Linux on Power
+    (re.compile(r"linux|rhel|suse|sles|ubuntu|debian|centos|rocky|alma",
+                re.IGNORECASE), "Linux BYOL"),
+]
+
+
+def _map_powervs_os_family(os_config: str) -> str:
+    """Map a normalised OS string to one of the 8 IBM Cool PowerVS OS family strings.
+
+    IBM Cool PowerVS families:
+      AIX | IBM i | IBM i MOL | Linux BYOL | SAP SUSE | SAP Red Hat | Red Hat GP | SUSE GP
+
+    Returns "AIX" as the fallback for unrecognised PowerVS records (AIX is the most
+    common PowerVS workload type and is the safest pricing default).
+    """
+    for pattern, family in _POWERVS_FAMILY_PATTERNS:
+        if pattern.search(os_config):
+            return family
+    return "AIX"
 
 
 _POWERVS_ASSUMPTION = {
@@ -102,9 +170,9 @@ _POWERVS_ASSUMPTION = {
     "assumed_value": "powervs",
     "original_value": None,
     "reasoning": (
-        "Operating system is AIX or IBM i — automatically designated as an IBM Power "
-        "Virtual Server (PowerVS) workload. These workloads require a separate IBM Cool "
-        "pricing exercise from x86/VPC workloads."
+        "Operating system is AIX, IBM i, or Linux-on-Power — automatically designated "
+        "as an IBM Power Virtual Server (PowerVS) workload. These workloads require a "
+        "separate IBM Cool pricing exercise from x86/VPC workloads."
     ),
     "confidence": "high",
 }
@@ -129,9 +197,9 @@ _SYSTEM_PROMPT = (
     "6. disks = integer count of disks, default 1 if unknown.\n"
     "7. os_vmware_tools = same full OS string as os_config (e.g. 'Microsoft Windows Server 2019 (64-bit)'), NOT 'toolsOk'.\n"
     "8. capacity_mb and consumed_mb = integers in MB. If source is GB, multiply by 1024.\n"
-    "9. server_type = 'powervs' when OS is AIX or IBM i (any version). Use 'vm' or 'bare_metal' for all other OS types.\n\n"
+    "9. server_type = 'powervs' when OS is AIX, IBM i, or any Linux-on-Power variant (SAP Red Hat, SAP SUSE, Red Hat GP, SUSE GP, Linux BYOL). Use 'vm' or 'bare_metal' for all other OS types.\n\n"
     "Required fields:\n"
-    '{"server_type":"vm|bare_metal|powervs (use powervs for AIX or IBM i OS)",'
+    '{"server_type":"vm|bare_metal|powervs (use powervs for AIX, IBM i, or Linux-on-Power OS)",'
     '"vinfo":{"vm_name":str,"powerstate":"poweredOn|poweredOff","template":"FALSE",'
     '"cpus":int,"memory_mb":int(RAM in MB - multiply GB by 1024),"nics":int(default 1),"disks":int(default 1),'
     '"provisioned_mb":int(total disk MB),"in_use_mb":int(default provisioned_mb*0.6),'
@@ -281,7 +349,21 @@ def _extract_json(text: str) -> str:
 
 # Maps common shorthand → IBM-standard full OS name (used by VMware/IBM Cool)
 _OS_NORMALIZATION: list[tuple[str, str]] = [
-    # Red Hat Enterprise Linux
+    # ── x86 VPC SAP/SQL variants — must come BEFORE generic RHEL/SUSE/Windows entries ──
+    # RHEL for SAP (x86 VPC)
+    (r"red\s*hat.*for.*sap",              "Red Hat Enterprise Linux for SAP (64-bit)"),
+    (r"rhel.*for.*sap",                   "Red Hat Enterprise Linux for SAP (64-bit)"),
+    (r"rhel.*sap(?!.*power)",             "Red Hat Enterprise Linux for SAP (64-bit)"),
+    # SUSE for SAP (x86 VPC) — negative lookahead excludes Power variants
+    (r"suse.*for.*sap",                   "SUSE Linux Enterprise Server for SAP (64-bit)"),
+    (r"sles.*for.*sap",                   "SUSE Linux Enterprise Server for SAP (64-bit)"),
+    (r"sles.*sap(?!.*power)",             "SUSE Linux Enterprise Server for SAP (64-bit)"),
+    # Windows with SQL Server
+    (r"windows.*sql\s*server",            "Microsoft Windows Server with SQL Server (64-bit)"),
+    (r"windows.*sql(?!.*power)",          "Microsoft Windows Server with SQL Server (64-bit)"),
+    (r"sql\s*server.*windows",            "Microsoft Windows Server with SQL Server (64-bit)"),
+
+    # ── Red Hat Enterprise Linux ──────────────────────────────────────────────
     (r"rhel\s*9",                         "Red Hat Enterprise Linux 9 (64-bit)"),
     (r"rhel\s*8",                         "Red Hat Enterprise Linux 8 (64-bit)"),
     (r"rhel\s*7",                         "Red Hat Enterprise Linux 7 (64-bit)"),
@@ -291,28 +373,39 @@ _OS_NORMALIZATION: list[tuple[str, str]] = [
     (r"red\s*hat.*7",                     "Red Hat Enterprise Linux 7 (64-bit)"),
     (r"red\s*hat.*6",                     "Red Hat Enterprise Linux 6 (64-bit)"),
     (r"red\s*hat",                        "Red Hat Enterprise Linux 8 (64-bit)"),
-    # SUSE / SLES
+    # ── SUSE / SLES ───────────────────────────────────────────────────────────
     (r"sles\s*15",                        "SUSE Linux Enterprise 15 (64-bit)"),
     (r"sles\s*12",                        "SUSE Linux Enterprise 12 (64-bit)"),
     (r"suse.*15",                         "SUSE Linux Enterprise 15 (64-bit)"),
     (r"suse.*12",                         "SUSE Linux Enterprise 12 (64-bit)"),
     (r"suse",                             "SUSE Linux Enterprise 15 (64-bit)"),
-    # Ubuntu
+    # ── Ubuntu ────────────────────────────────────────────────────────────────
     (r"ubuntu\s*2[23]",                   "Ubuntu Linux (64-bit)"),
     (r"ubuntu\s*20",                      "Ubuntu Linux (64-bit)"),
     (r"ubuntu\s*18",                      "Ubuntu Linux (64-bit)"),
     (r"ubuntu",                           "Ubuntu Linux (64-bit)"),
-    # Debian
+    # ── Debian ────────────────────────────────────────────────────────────────
     (r"debian",                           "Debian GNU/Linux (64-bit)"),
-    # CentOS
+    # ── CentOS ────────────────────────────────────────────────────────────────
     (r"centos\s*[89]",                    "CentOS Linux (64-bit)"),
     (r"centos\s*7",                       "CentOS 4/5/6/7 (64-bit)"),
     (r"centos",                           "CentOS Linux (64-bit)"),
-    # Oracle Linux
+    # ── Oracle Linux ──────────────────────────────────────────────────────────
     (r"oracle.*linux.*[89]",              "Oracle Linux 8 and later (64-bit)"),
     (r"oracle.*linux.*7",                 "Oracle Linux 7 (64-bit)"),
     (r"oracle.*linux",                    "Oracle Linux 8 and later (64-bit)"),
-    # Windows Server
+    # ── Rocky Linux ───────────────────────────────────────────────────────────
+    (r"rocky.*linux.*9",                  "Rocky Linux (64-bit)"),
+    (r"rocky.*linux.*8",                  "Rocky Linux (64-bit)"),
+    (r"rocky.*linux",                     "Rocky Linux (64-bit)"),
+    # ── AlmaLinux ─────────────────────────────────────────────────────────────
+    (r"alma.*linux.*9",                   "AlmaLinux (64-bit)"),
+    (r"alma.*linux",                      "AlmaLinux (64-bit)"),
+    (r"almalinux",                        "AlmaLinux (64-bit)"),
+    # ── Fedora CoreOS ─────────────────────────────────────────────────────────
+    (r"fedora.*coreos",                   "Fedora CoreOS (64-bit)"),
+    (r"coreos",                           "Fedora CoreOS (64-bit)"),
+    # ── Windows Server ────────────────────────────────────────────────────────
     (r"windows.*server.*2022",            "Microsoft Windows Server 2022 (64-bit)"),
     (r"windows.*server.*2019",            "Microsoft Windows Server 2019 (64-bit)"),
     (r"windows.*server.*2016",            "Microsoft Windows Server 2016 (64-bit)"),
@@ -327,7 +420,12 @@ _OS_NORMALIZATION: list[tuple[str, str]] = [
     (r"win.*2012",                        "Microsoft Windows Server 2012 (64-bit)"),
     (r"win.*2008\s*r2",                   "Microsoft Windows Server 2008 R2 (64-bit)"),
     (r"win.*2008",                        "Microsoft Windows Server 2008 (64-bit)"),
-    # AIX
+    # ── IBM i / OS/400 ────────────────────────────────────────────────────────
+    (r"ibm\s*i\s*mol",                    "IBM i (OS/400)"),  # MOL variant — same normalization
+    (r"ibm\s*i\b",                        "IBM i (OS/400)"),
+    (r"i/os",                             "IBM i (OS/400)"),
+    (r"os/400",                           "IBM i (OS/400)"),
+    # ── AIX ───────────────────────────────────────────────────────────────────
     (r"aix\s*7",                          "IBM AIX 7.x"),
     (r"aix\s*6",                          "IBM AIX 6.x"),
     (r"aix",                              "IBM AIX 7.x"),
@@ -368,6 +466,13 @@ _MAX_DISK_MB = 32 * 1024 * 1024   # 32 TB
 _MAX_RAM_MB  = 4 * 1024 * 1024    # 4 TB (generous upper bound for a single VM)
 # Reasonable vCPU ceiling for a single VM
 _MAX_CPUS    = 256
+
+# IBM Cloud VPC boot volume constraints — applied at normalisation time so the
+# clamping is recorded as an Assumption visible on the Review page and in the
+# AI Assumptions Report.  The vpc_calculator_generator reads the already-clamped
+# provisioned_mb and applies matching logic at export time (Sub-Task 1).
+_IBM_VPC_BOOT_MIN_MB = 100 * 1024   # 100 GB minimum boot volume
+_IBM_VPC_BOOT_MAX_MB = 250 * 1024   # 250 GB maximum boot volume
 
 
 def _clamp_mb(value: object, label: str, assumptions_out: list[dict], max_mb: int) -> int:
@@ -458,8 +563,65 @@ def _sanitize_numeric_fields(result: dict) -> dict:
             mem_val = corrected
         vinfo["memory_mb"] = _clamp_mb(mem_val, "vinfo/memory_mb", new_assumptions, _MAX_RAM_MB)
 
+        # Capture original provisioned_mb before any IBM VPC clamping so we can
+        # recalculate in_use_mb consistently afterwards.
+        original_prov = int(vinfo.get("provisioned_mb") or 0)
+
         vinfo["provisioned_mb"]  = _clamp_mb(vinfo.get("provisioned_mb", 0),  "vinfo/provisioned_mb",  new_assumptions, _MAX_DISK_MB)
         vinfo["in_use_mb"]       = _clamp_mb(vinfo.get("in_use_mb", 0),       "vinfo/in_use_mb",       new_assumptions, _MAX_DISK_MB)
+
+        # IBM Cloud VPC boot volume constraints (applies to x86 VSIs only).
+        # We clamp here at normalisation time so the adjustment is visible in the
+        # Review page AssumptionsPanel and in the AI Assumptions Report.
+        # The vpc_calculator_generator mirrors this logic at export time for the
+        # Boot Volume Size (GB) and Data Volume Size (GB) columns.
+        prov_mb = vinfo["provisioned_mb"]
+        if prov_mb < _IBM_VPC_BOOT_MIN_MB:
+            original_gb = round(prov_mb / 1024, 1)
+            vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MIN_MB
+            new_assumptions.append({
+                "field_name": "vinfo/provisioned_mb",
+                "assumed_value": str(_IBM_VPC_BOOT_MIN_MB),
+                "original_value": str(prov_mb),
+                "reasoning": (
+                    f"IBM Cloud VPC boot volume minimum is 100 GB. Customer-provided disk "
+                    f"size of {original_gb} GB ({prov_mb} MB) is below this threshold and "
+                    f"has been raised to 100 GB (102,400 MB). Please confirm the correct "
+                    f"disk size with the customer."
+                ),
+                "confidence": "medium",
+            })
+            logger.info(
+                "IBM VPC boot disk clamped UP: %d MB → %d MB (was below 100 GB minimum)",
+                prov_mb, _IBM_VPC_BOOT_MIN_MB,
+            )
+        elif prov_mb > _IBM_VPC_BOOT_MAX_MB:
+            original_gb = round(prov_mb / 1024, 1)
+            overflow_mb = prov_mb - _IBM_VPC_BOOT_MAX_MB
+            overflow_gb = round(overflow_mb / 1024, 1)
+            vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MAX_MB
+            new_assumptions.append({
+                "field_name": "vinfo/provisioned_mb",
+                "assumed_value": str(_IBM_VPC_BOOT_MAX_MB),
+                "original_value": str(prov_mb),
+                "reasoning": (
+                    f"IBM Cloud VPC boot volume maximum is 250 GB. Customer-provided disk "
+                    f"size of {original_gb} GB ({prov_mb} MB) exceeds this limit. Boot "
+                    f"disk has been set to 250 GB (256,000 MB). The excess {overflow_gb} GB "
+                    f"({overflow_mb} MB) will be added as a separate Data Volume in the "
+                    f"Cloud Solution Export. Confirm data volume requirements with customer."
+                ),
+                "confidence": "medium",
+            })
+            logger.info(
+                "IBM VPC boot disk clamped DOWN: %d MB → %d MB (%.1f GB overflow → Data Volume)",
+                prov_mb, _IBM_VPC_BOOT_MAX_MB, overflow_gb,
+            )
+
+        # Recalculate in_use_mb if it was AI-estimated at 60% of the original provisioned_mb.
+        # If the customer provided a real in_use_mb it won't match exactly 60% so we leave it.
+        if original_prov > 0 and vinfo["in_use_mb"] == round(original_prov * 0.6):
+            vinfo["in_use_mb"] = round(vinfo["provisioned_mb"] * 0.6)
 
         # Fix 4: nics and disks must be non-null integers >= 1
         try:
@@ -1018,9 +1180,11 @@ def normalize_record(raw_data: dict) -> dict:
 
     result = _sanitize_numeric_fields(result)
 
-    # ── PowerVS post-processor: override server_type if OS is AIX/IBM i ──────
+    # ── PowerVS post-processor: override server_type and map IBM Cool OS family ──
     # The LLM should already return "powervs" per the prompt, but we enforce it
     # in Python as a guaranteed post-processing step regardless of LLM compliance.
+    # Also handles Linux-on-Power variants (SAP Red Hat, SAP SUSE, Red Hat GP,
+    # SUSE GP, Linux BYOL) which older prompts would have classified as x86.
     vinfo = result.get("vinfo", {})
     os_cfg_str = str(vinfo.get("os_config") or "")
     if _is_powervs_os(os_cfg_str) and result.get("server_type") != "powervs":
@@ -1028,10 +1192,33 @@ def normalize_record(raw_data: dict) -> dict:
         logger.info("PowerVS override applied for OS: %s", os_cfg_str)
 
     if result.get("server_type") == "powervs":
-        # Ensure assumption is present (idempotent — only add once)
+        # Ensure the server_type assumption is present (idempotent — only add once)
         existing_fields = {a.get("field_name") for a in result.get("assumptions", [])}
         if "server_type" not in existing_fields:
             result["assumptions"] = result.get("assumptions", []) + [dict(_POWERVS_ASSUMPTION)]
+
+        # Map the OS string to one of the 8 IBM Cool PowerVS OS family strings
+        # and store it in vinfo["powervs_os_family"].  The rvtools_generator writes
+        # this value to the "OS according to the configuration file" column so
+        # IBM Cool receives the correct pricing family.
+        pvs_family = _map_powervs_os_family(os_cfg_str)
+        if vinfo.get("powervs_os_family") != pvs_family:
+            result["vinfo"]["powervs_os_family"] = pvs_family
+            # Only record the assumption if the family differs from the raw OS string
+            if pvs_family.lower() not in os_cfg_str.lower():
+                result["assumptions"] = result.get("assumptions", []) + [{
+                    "field_name": "vinfo/powervs_os_family",
+                    "assumed_value": pvs_family,
+                    "original_value": os_cfg_str or None,
+                    "reasoning": (
+                        f"OS string '{os_cfg_str}' mapped to IBM Cool PowerVS OS family "
+                        f"'{pvs_family}'. This value is written to the 'OS according to the "
+                        f"configuration file' column in the PowerVS RVTools export so IBM Cool "
+                        f"applies the correct PowerVS pricing tier."
+                    ),
+                    "confidence": "high",
+                }]
+        logger.info("PowerVS OS family for '%s': %s", os_cfg_str, pvs_family)
 
     vhost, vhost_assumptions = _synthesize_vhost(
         vm_name=vinfo.get("vm_name", "unknown"),
