@@ -227,6 +227,11 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/export/rvtools-powervs`, { method: 'POST' }).then(r => r.json()),
     downloadRVToolsPowerVS: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
+    generateRVToolsPowerVSFull: (projectId: string): Promise<ExportRecord> =>
+      fetch(`${BASE}/projects/${projectId}/export/rvtools-powervs-full`, { method: 'POST' }).then(r => r.json()),
+    downloadRVToolsPowerVSFull: (projectId: string, exportId: string): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
+
     generateAssumptionsPowerVS: (projectId: string): Promise<ExportRecord> =>
       fetch(`${BASE}/projects/${projectId}/export/assumptions-powervs`, { method: 'POST' }).then(r => r.json()),
     downloadAssumptionsPowerVS: (projectId: string, exportId: string): Promise<Response> =>
