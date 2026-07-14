@@ -19,6 +19,20 @@ export const IBM_VPC_REGIONS: Record<string, { label: string; geography: string;
   'mx-qro':    { label: 'Querétaro (mx-qro)',        geography: 'North America', zones: ['mx-qro-1',   'mx-qro-2',   'mx-qro-3']   },
 };
 
+// IBM PowerVS regions and their datacenters (short names like dal10, lon06)
+export const IBM_POWERVS_REGIONS: Record<string, { label: string; geography: string; datacenters: string[] }> = {
+  'us-south':  { label: 'Dallas (us-south)',        geography: 'North America', datacenters: ['dal10', 'dal12']         },
+  'us-east':   { label: 'Washington DC (us-east)',  geography: 'North America', datacenters: ['wdc06', 'wdc07']         },
+  'ca-tor':    { label: 'Toronto (ca-tor)',          geography: 'North America', datacenters: ['tor01']                  },
+  'eu-de':     { label: 'Frankfurt (eu-de)',         geography: 'Europe',        datacenters: ['fra04', 'fra05']         },
+  'eu-gb':     { label: 'London (eu-gb)',            geography: 'Europe',        datacenters: ['lon04', 'lon06']         },
+  'jp-tok':    { label: 'Tokyo (jp-tok)',            geography: 'Asia Pacific',  datacenters: ['tok02', 'tok04']         },
+  'jp-osa':    { label: 'Osaka (jp-osa)',            geography: 'Asia Pacific',  datacenters: ['osa21']                  },
+  'au-syd':    { label: 'Sydney (au-syd)',           geography: 'Asia Pacific',  datacenters: ['syd04', 'syd05']         },
+  'in-che':    { label: 'Chennai (in-che)',          geography: 'Asia Pacific',  datacenters: ['che01']                  },
+  'br-sao':    { label: 'São Paulo (br-sao)',        geography: 'South America', datacenters: ['sao01', 'sao04']         },
+};
+
 export interface Folder {
   id: string;
   name: string;
@@ -36,6 +50,8 @@ export interface Project {
   folder_id: string | null;
   vpc_region: string | null;
   vpc_datacenter: string | null;
+  pvs_region: string | null;
+  pvs_datacenter: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -162,7 +178,7 @@ export const api = {
       }).then(r => r.json()),
     get: (id: string): Promise<Project> =>
       fetch(`${BASE}/projects/${id}`).then(r => r.json()),
-    update: (id: string, data: { name?: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
+    update: (id: string, data: { name?: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string; pvs_region?: string; pvs_datacenter?: string }): Promise<Project> =>
       fetch(`${BASE}/projects/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -231,6 +247,11 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/export/rvtools-powervs-full`, { method: 'POST' }).then(r => r.json()),
     downloadRVToolsPowerVSFull: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
+    generatePowerVSCalculator: (projectId: string): Promise<ExportRecord> =>
+      fetch(`${BASE}/projects/${projectId}/export/powervs-calculator`, { method: 'POST' }).then(r => r.json()),
+    downloadPowerVSCalculator: (projectId: string, exportId: string): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
+
 
     generateAssumptionsPowerVS: (projectId: string): Promise<ExportRecord> =>
       fetch(`${BASE}/projects/${projectId}/export/assumptions-powervs`, { method: 'POST' }).then(r => r.json()),

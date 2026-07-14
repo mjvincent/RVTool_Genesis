@@ -26,6 +26,8 @@ async def create_project(
         folder_id=body.folder_id,
         vpc_region=body.vpc_region or "us-south",
         vpc_datacenter=body.vpc_datacenter or "us-south-1",
+        pvs_region=body.pvs_region or "us-south",
+        pvs_datacenter=body.pvs_datacenter or "dal10",
     )
     db.add(project)
     await db.commit()
@@ -87,6 +89,10 @@ async def update_project(
         project.vpc_region = body.vpc_region
     if body.vpc_datacenter is not None:
         project.vpc_datacenter = body.vpc_datacenter
+    if body.pvs_region is not None:
+        project.pvs_region = body.pvs_region
+    if body.pvs_datacenter is not None:
+        project.pvs_datacenter = body.pvs_datacenter
     await db.commit()
     await db.refresh(project)
     return ProjectResponse.model_validate(project)
