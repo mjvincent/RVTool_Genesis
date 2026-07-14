@@ -403,6 +403,16 @@ archiving.
 
 ## Changelog
 
+### v1.0.0 — First stable release
+
+- **IBM VPC boot disk sizing** — Boot disk clamped to 100 GB minimum / 250 GB maximum per IBM VPC rules; overflow written as a separate Data Volume row in the Cloud Solution Export. Both cases recorded as documented assumptions.
+- **`total_disk_mb` field** — Full corrected disk size preserved before boot cap so Data Volume is never lost when the boot disk is clamped.
+- **GB → MB unit mismatch detection** — LLM sometimes returns raw GB values in the MB field when the source spreadsheet uses a GB column. Cross-check against raw column names now auto-corrects (raw_gb × 1024) and logs the fix as an assumption.
+- **PowerVS OS families** — Eight IBM Cool PowerVS OS families (`AIX`, `IBM i`, `IBM i MOL`, `Linux BYOL`, `SAP SUSE`, `SAP Red Hat`, `Red Hat GP`, `SUSE GP`) now mapped at normalize time and written to `"OS according to the configuration file"` in both the 4-sheet and 22-sheet RVTools exports.
+- **`Operating System VS` column** — Cloud Solution Export now populates the IBM VPC stock image name for every x86 row, including SAP (RHEL/SUSE) and SQL Server variants.
+- **Extended OS normalisation** — Added Rocky Linux, AlmaLinux, Fedora, IBM i, IBM i MOL, RHEL/SUSE for SAP, and Windows with SQL Server patterns to the AI normalizer and frontend OS picker.
+- **VERSION file** — Single source of truth for application version at repo root; `web/package.json` and `api/main.py` both set to `1.0.0`.
+
 ### feat/vpc-calculator-export
 - **Cloud Solution Export** — new 3-sheet IBM Cloud Cost Estimator workbook (Project Settings, Exceptions, Data Domains) generated directly from normalized records; eliminates the need for the intermediate `rvtools2vpc` web tool
 - **IBM VPC profile selection** — Flex-Compute (`cxf`), Flex-Balanced (`bxf`), Flex-Memory (`mxf`) chosen automatically from CPU/RAM ratio; profiles snap to nearest standard IBM VPC size
