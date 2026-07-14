@@ -89,10 +89,12 @@ export default function ExportPage() {
   const [asmDone, setAsmDone]           = useState(false);
 
   // PowerVS exports
-  const [pvsCoolLoading, setPvsCoolLoading] = useState(false);
-  const [pvsAsmLoading, setPvsAsmLoading]   = useState(false);
-  const [pvsCoolDone, setPvsCoolDone]       = useState(false);
-  const [pvsAsmDone, setPvsAsmDone]         = useState(false);
+  const [pvsCoolLoading, setPvsCoolLoading]     = useState(false);
+  const [pvsFullLoading, setPvsFullLoading]     = useState(false);
+  const [pvsAsmLoading, setPvsAsmLoading]       = useState(false);
+  const [pvsCoolDone, setPvsCoolDone]           = useState(false);
+  const [pvsFullDone, setPvsFullDone]           = useState(false);
+  const [pvsAsmDone, setPvsAsmDone]             = useState(false);
 
   const [error, setError] = useState('');
 
@@ -163,6 +165,17 @@ export default function ExportPage() {
       setPvsCoolDone(true);
     } catch { setError('Failed to generate PowerVS Cloud Solutioning Tool export.'); }
     finally { setPvsCoolLoading(false); }
+  }
+
+  async function handlePVSFullExport() {
+    setPvsFullLoading(true); setError('');
+    try {
+      const exp = await api.exports.generateRVToolsPowerVSFull(projectId);
+      const resp = await api.exports.downloadRVToolsPowerVSFull(projectId, exp.id);
+      await triggerDownload(resp, (exp as any).filename || `RVTools_PowerVS_Full_${projectId}.xlsx`);
+      setPvsFullDone(true);
+    } catch { setError('Failed to generate PowerVS full RVTools export.'); }
+    finally { setPvsFullLoading(false); }
   }
 
   async function handlePVSAssumptions() {
@@ -373,9 +386,9 @@ export default function ExportPage() {
               </p>
             </div>
 
-            <div className="export-card-row" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: '2.5rem' }}>
+            <div className="export-card-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>
 
-              {/* Card 4: PowerVS Cool Tool Export */}
+              {/* Card 4: PowerVS Cool Tool Export (IBM Cool — 4-sheet) */}
               <div className="export-card" style={{ borderTop: '3px solid #6929c4' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <DocumentDownload size={20} style={{ color: '#6929c4', flexShrink: 0 }} />
@@ -395,7 +408,27 @@ export default function ExportPage() {
                 )}
               </div>
 
-              {/* Card 5: PowerVS Assumptions */}
+              {/* Card 5: PowerVS RVTools Export (22-sheet — VCF Migration Lite) */}
+              <div className="export-card" style={{ borderTop: '3px solid #6929c4' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <DocumentDownload size={20} style={{ color: '#6929c4', flexShrink: 0 }} />
+                  <span className="export-card-title">PowerVS RVTools Export</span>
+                  <InfoTooltip text="Full 22-sheet RVTools workbook for PowerVS (AIX/IBM i) records. Required by VCF Migration Lite and other tools that validate all 22 RVTools tabs on import." />
+                  <span style={{ fontSize: '0.75rem', color: '#6929c4', display: 'block', width: '100%', marginTop: '0.1rem' }}>(Full 22-sheet / VCF Migration Lite format)</span>
+                </div>
+                <p className="export-card-desc">
+                  Full 22-sheet RVTools format for PowerVS records. Contains <strong>{powervsCount} PowerVS records</strong>. Use when your tooling requires all 22 RVTools tabs.
+                </p>
+                {pvsFullLoading ? (
+                  <InlineLoading description="Generating…" />
+                ) : (
+                  <Button renderIcon={pvsFullDone ? Checkmark : DocumentDownload} kind={pvsFullDone ? 'ghost' : 'secondary'} onClick={handlePVSFullExport} size="md">
+                    {pvsFullDone ? 'Downloaded ✓' : 'Download PowerVS RVTools export'}
+                  </Button>
+                )}
+              </div>
+
+              {/* Card 6: PowerVS Assumptions */}
               <div className="export-card" style={{ borderTop: '3px solid #6929c4' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <DocumentDownload size={20} style={{ color: '#8a3ffc', flexShrink: 0 }} />

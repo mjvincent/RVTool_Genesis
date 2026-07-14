@@ -239,6 +239,55 @@ async def generate_rvtools_powervs_export(
     return RVToolsExportResponse.model_validate(export)
 
 
+@router.post(
+    "/projects/{project_id}/export/rvtools-powervs-full",
+    response_model=RVToolsExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_rvtools_powervs_full_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RVToolsExportResponse:
+    """Generate PowerVS-only RVTools .xlsx in full 22-sheet format.
+
+    Uses the 22-sheet format for tools like VCF Migration Lite that validate
+    all 22 RVTools tabs on import. PowerVS (AIX/IBM i) records only.
+    """
+    project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
+
+    powervs_records = [r for r in enriched if r["server_type"] == "powervs" and not r["is_excluded"]]
+    if not powervs_records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PowerVS (AIX/IBM i) records found in this project.",
+        )
+
+    file_bytes = rvtools_generator.generate_rvtools_xlsx(
+        enriched, project.name, powervs_only=True
+    )
+
+    safe_name = project.name.replace(" ", "_")
+    filename = f"RVTools_PowerVS_Full_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    export = RVToolsExport(
+        project_id=project_id,
+        file_data=file_bytes,
+        filename=filename,
+        record_count=len(powervs_records),
+        status="complete",
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+
+    logger.info(
+        "RVTools PowerVS full (22-sheet) export %s generated for project %s (%d records)",
+        export.id, project_id, len(powervs_records),
+    )
+    return RVToolsExportResponse.model_validate(export)
+
+
 @router.get(
     "/projects/{project_id}/exports/rvtools",
     response_model=RVToolsExportListResponse,
