@@ -58,6 +58,9 @@ class Project(Base):
     # IBM Cloud VPC target region — set at project creation, used by VPC Calculator export
     vpc_region: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south")
     vpc_datacenter: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south-1")
+    # IBM PowerVS target region/datacenter — independent from VPC (uses short names e.g. dal10)
+    pvs_region: Mapped[str | None] = mapped_column(String, nullable=True, default="us-south")
+    pvs_datacenter: Mapped[str | None] = mapped_column(String, nullable=True, default="dal10")
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 

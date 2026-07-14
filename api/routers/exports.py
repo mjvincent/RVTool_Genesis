@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import get_db
 from db.models import Assumption, AssumptionsExport, Project, RVToolsExport, ServerRecord
 from routers.projects import _get_project_or_404
-from services import assumptions_generator, rvtools_generator, vpc_calculator_generator
+from services import assumptions_generator, powervs_calculator_generator, rvtools_generator, vpc_calculator_generator
 from services.rvtools_generator import generate_rvtools_pure_xlsx
 
 logger = logging.getLogger(__name__)
@@ -409,6 +409,69 @@ async def generate_vpc_calculator_export(
     logger.info(
         "VPC Calculator export %s generated for project %s (%d records, region=%s, dc=%s)",
         export.id, project_id, len(x86_records), vpc_region, vpc_datacenter,
+    )
+    return RVToolsExportResponse.model_validate(export)
+
+
+@router.post(
+    "/projects/{project_id}/export/powervs-calculator",
+    response_model=RVToolsExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_powervs_calculator_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> RVToolsExportResponse:
+    """Generate a 3-sheet IBM PowerVS Calculator workbook.
+
+    Produces the PowerVS equivalent of the VPC Cloud Solution Export:
+      - Project Settings (Zone + per-server Compute rows)
+      - Exceptions       (servers exceeding known machine type limits)
+      - Data Domains     (static PowerVS reference lookup table)
+
+    Target region and datacenter are read from the project's pvs_region /
+    pvs_datacenter fields (PowerVS uses short names like dal10, lon06).
+    """
+    project = await _get_project_or_404(db, project_id)
+    enriched = await _fetch_enriched_records(project_id, db)
+
+    powervs_records = [
+        r for r in enriched
+        if r["server_type"] == "powervs" and not r["is_excluded"]
+    ]
+    if not powervs_records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PowerVS (AIX/IBM i) records found in this project.",
+        )
+
+    pvs_region     = project.pvs_region or "us-south"
+    pvs_datacenter = project.pvs_datacenter or "dal10"
+
+    file_bytes = powervs_calculator_generator.generate_powervs_calculator_xlsx(
+        enriched,
+        project.name,
+        pvs_region=pvs_region,
+        pvs_datacenter=pvs_datacenter,
+    )
+
+    safe_name = project.name.replace(" ", "_")
+    filename = f"CloudSolution_PowerVS_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    export = RVToolsExport(
+        project_id=project_id,
+        file_data=file_bytes,
+        filename=filename,
+        record_count=len(powervs_records),
+        status="complete",
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+
+    logger.info(
+        "PowerVS Calculator export %s generated for project %s (%d records, region=%s, dc=%s)",
+        export.id, project_id, len(powervs_records), pvs_region, pvs_datacenter,
     )
     return RVToolsExportResponse.model_validate(export)
 

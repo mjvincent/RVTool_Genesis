@@ -11,6 +11,8 @@ class ProjectCreate(BaseModel):
     folder_id: UUID | None = None
     vpc_region: str | None = "us-south"
     vpc_datacenter: str | None = "us-south-1"
+    pvs_region: str | None = "us-south"
+    pvs_datacenter: str | None = "dal10"
 
 
 class ProjectUpdate(BaseModel):
@@ -19,6 +21,8 @@ class ProjectUpdate(BaseModel):
     folder_id: UUID | None = None
     vpc_region: str | None = None
     vpc_datacenter: str | None = None
+    pvs_region: str | None = None
+    pvs_datacenter: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -28,6 +32,8 @@ class ProjectResponse(BaseModel):
     folder_id: UUID | None
     vpc_region: str | None
     vpc_datacenter: str | None
+    pvs_region: str | None
+    pvs_datacenter: str | None
     created_at: datetime
     updated_at: datetime
 

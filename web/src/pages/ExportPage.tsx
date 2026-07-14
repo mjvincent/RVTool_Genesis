@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem } from '@carbon/react';
 import { DocumentDownload, Checkmark, Information, Lightning, Edit } from '@carbon/icons-react';
-import { api, Project, ProcessingStatus, IBM_VPC_REGIONS } from '../api/client';
+import { api, Project, ProcessingStatus, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
 import StepProgress from '../components/StepProgress';
 
 // ---------------------------------------------------------------------------
@@ -88,10 +88,18 @@ export default function ExportPage() {
   const [pureDone, setPureDone]         = useState(false);
   const [asmDone, setAsmDone]           = useState(false);
 
+  // PowerVS region edit state
+  const [editingPvsRegion, setEditingPvsRegion] = useState(false);
+  const [editPvsRegion, setEditPvsRegion]       = useState('');
+  const [editPvsDatacenter, setEditPvsDatacenter] = useState('');
+  const [pvsRegionSaving, setPvsRegionSaving]   = useState(false);
+
   // PowerVS exports
+  const [pvsSolLoading, setPvsSolLoading]       = useState(false);
   const [pvsCoolLoading, setPvsCoolLoading]     = useState(false);
   const [pvsFullLoading, setPvsFullLoading]     = useState(false);
   const [pvsAsmLoading, setPvsAsmLoading]       = useState(false);
+  const [pvsSolDone, setPvsSolDone]             = useState(false);
   const [pvsCoolDone, setPvsCoolDone]           = useState(false);
   const [pvsFullDone, setPvsFullDone]           = useState(false);
   const [pvsAsmDone, setPvsAsmDone]             = useState(false);
@@ -103,6 +111,8 @@ export default function ExportPage() {
       setProject(p);
       setEditRegion(p.vpc_region ?? 'us-south');
       setEditZone(p.vpc_datacenter ?? 'us-south-1');
+      setEditPvsRegion(p.pvs_region ?? 'us-south');
+      setEditPvsDatacenter(p.pvs_datacenter ?? 'dal10');
     }).catch(() => {});
     api.processing.getStatus(projectId).then(setStatus).catch(() => {});
     api.exports.getPowerVSCount(projectId).then(r => setPowervsCount(r.powervs_count)).catch(() => {});
@@ -156,6 +166,27 @@ export default function ExportPage() {
   }
 
   // ── PowerVS handlers ──────────────────────────────────────────────────────
+  async function handleSavePvsRegion() {
+    setPvsRegionSaving(true);
+    try {
+      const updated = await api.projects.update(projectId, { pvs_region: editPvsRegion, pvs_datacenter: editPvsDatacenter });
+      setProject(updated);
+      setEditingPvsRegion(false);
+    } catch { /* keep editing open on error */ }
+    finally { setPvsRegionSaving(false); }
+  }
+
+  async function handlePVSSolutionExport() {
+    setPvsSolLoading(true); setError('');
+    try {
+      const exp = await api.exports.generatePowerVSCalculator(projectId);
+      const resp = await api.exports.downloadPowerVSCalculator(projectId, exp.id);
+      await triggerDownload(resp, (exp as any).filename || `CloudSolution_PowerVS_${projectId}.xlsx`);
+      setPvsSolDone(true);
+    } catch { setError('Failed to generate PowerVS Cloud Solution export.'); }
+    finally { setPvsSolLoading(false); }
+  }
+
   async function handlePVSCoolExport() {
     setPvsCoolLoading(true); setError('');
     try {
@@ -371,7 +402,7 @@ export default function ExportPage() {
         {powervsCount > 0 && (
           <>
             <div style={{ borderTop: '2px solid #6929c4', paddingTop: '1.5rem', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                 <Lightning size={20} style={{ color: '#6929c4' }} />
                 <h2 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#6929c4', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
                   PowerVS Workloads
@@ -380,15 +411,61 @@ export default function ExportPage() {
                   </span>
                 </h2>
               </div>
-              <p style={{ fontSize: '0.8125rem', color: '#525252', margin: 0 }}>
+              <p style={{ fontSize: '0.8125rem', color: '#525252', marginBottom: '0.75rem' }}>
                 These servers run AIX or IBM i and have been automatically designated as IBM Power Virtual Server workloads.
                 Upload the exports below to IBM Cool <strong>separately</strong> from the x86 exports to get dedicated PowerVS pricing.
               </p>
+              {/* PowerVS region/datacenter selector */}
+              {!editingPvsRegion ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', color: '#525252' }}>
+                  <span>PowerVS target:</span>
+                  <strong style={{ color: '#6929c4' }}>{project?.pvs_region ?? 'us-south'} / {project?.pvs_datacenter ?? 'dal10'}</strong>
+                  <button onClick={() => setEditingPvsRegion(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', color: '#6929c4', display: 'inline-flex', alignItems: 'center' }}>
+                    <Edit size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <Select id="pvs-region-sel" labelText="PowerVS Region" value={editPvsRegion} onChange={e => { setEditPvsRegion(e.target.value); setEditPvsDatacenter(IBM_POWERVS_REGIONS[e.target.value]?.datacenters[0] ?? 'dal10'); }} size="sm" style={{ minWidth: 220 }}>
+                    {Object.entries(IBM_POWERVS_REGIONS).map(([k, v]) => <SelectItem key={k} value={k} text={v.label} />)}
+                  </Select>
+                  <Select id="pvs-dc-sel" labelText="Datacenter" value={editPvsDatacenter} onChange={e => setEditPvsDatacenter(e.target.value)} size="sm" style={{ minWidth: 120 }}>
+                    {(IBM_POWERVS_REGIONS[editPvsRegion]?.datacenters ?? ['dal10']).map(dc => <SelectItem key={dc} value={dc} text={dc} />)}
+                  </Select>
+                  <Button size="sm" onClick={handleSavePvsRegion} disabled={pvsRegionSaving}>
+                    {pvsRegionSaving ? 'Saving…' : 'Save'}
+                  </Button>
+                  <Button size="sm" kind="ghost" onClick={() => setEditingPvsRegion(false)}>Cancel</Button>
+                </div>
+              )}
             </div>
 
-            <div className="export-card-row" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '2.5rem' }}>
+            {/* 2×2 grid: Cloud Solution | Cool Tool | RVTools 22-sheet | AI Assumptions */}
+            <div className="export-card-row" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginBottom: '2.5rem' }}>
 
-              {/* Card 4: PowerVS Cool Tool Export (IBM Cool — 4-sheet) */}
+              {/* Card 4: PowerVS Cloud Solution Export (NEW — 3-sheet IBM PowerVS Calculator) */}
+              <div className="export-card" style={{ borderTop: '3px solid #6929c4' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <DocumentDownload size={20} style={{ color: '#6929c4', flexShrink: 0 }} />
+                  <span className="export-card-title">PowerVS Cloud Solution Export</span>
+                  <InfoTooltip text="3-sheet IBM PowerVS Calculator workbook (Project Settings, Exceptions, Data Domains). PowerVS equivalent of the x86 Cloud Solution Export. Contains machine type, entitled processors, OS family, storage tier and size for each AIX/IBM i server." />
+                  <span style={{ fontSize: '0.75rem', color: '#6929c4', display: 'block', width: '100%', marginTop: '0.1rem' }}>
+                    (IBM PowerVS Cost Estimator — datacenter: <strong>{project?.pvs_datacenter ?? 'dal10'}</strong>)
+                  </span>
+                </div>
+                <p className="export-card-desc">
+                  3-sheet workbook for IBM PowerVS pricing. Profiles your <strong>{powervsCount} PowerVS records</strong> onto s922/s1022/e980 machine types with storage.
+                </p>
+                {pvsSolLoading ? (
+                  <InlineLoading description="Generating…" />
+                ) : (
+                  <Button renderIcon={pvsSolDone ? Checkmark : DocumentDownload} kind={pvsSolDone ? 'ghost' : 'primary'} onClick={handlePVSSolutionExport} size="md">
+                    {pvsSolDone ? 'Downloaded ✓' : 'Download PowerVS Cloud Solution export'}
+                  </Button>
+                )}
+              </div>
+
+              {/* Card 5: PowerVS Cool Tool Export (IBM Cool — 4-sheet) */}
               <div className="export-card" style={{ borderTop: '3px solid #6929c4' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <DocumentDownload size={20} style={{ color: '#6929c4', flexShrink: 0 }} />
