@@ -49,73 +49,127 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 #   mxf (Flex-Memory):   2, 4, 8, 16, 24, 32, 48, 64, 96
 # ---------------------------------------------------------------------------
 
-# Per-family CPU size lists — derived verbatim from _DATA_DOMAINS_ROWS Flex entries.
-# These are the ONLY valid CPU counts for each family in IBM Cloud VPC VSI.
-_CXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # cxf: Flex-Compute   (IBM catalog max: 64)
-_BXF_CPU_SIZES = [2, 4, 8, 16, 32, 48, 64]        # bxf: Flex-Balanced  (IBM catalog max: 64; no 12, 20, 24)
-_MXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # mxf: Flex-Memory    (IBM catalog max: 64)
+# ---------------------------------------------------------------------------
+# Flex-Nano (nxf) — fixed profile combos (NOT a sliding ratio family).
+# These are the only valid nxf profiles per IBM Cloud docs (verified 2025-07-15).
+# Ordered by (vcpu, ram) so a best-fit next() scan always finds the smallest match.
+# ---------------------------------------------------------------------------
+_NXF_PROFILES: list[tuple[int, int, str]] = [
+    (1, 1, "nxf-1x1"),
+    (1, 2, "nxf-1x2"),
+    (1, 4, "nxf-1x4"),
+    (2, 1, "nxf-2x1"),
+    (2, 2, "nxf-2x2"),
+]
 
-# Ordered list of Flex families:
-#   (gb_per_vcpu_ratio, prefix, category_label, valid_cpu_sizes)
-# The algorithm tries each family in order. For each family it finds the smallest
-# valid CPU size >= requested, then checks whether snap_cpu × ratio >= ram_gb.
-# The first family that satisfies BOTH constraints is selected.
+# Per-family CPU size lists — IBM Cloud docs, verified 2025-07-15.
+# bxf DOES have 24-vCPU (bxf-24x96 is a real profile); only 12 and 20 are absent.
+_CXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # cxf: Flex-Compute   (max: 64)
+_BXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # bxf: Flex-Balanced  (max: 64; no 12, 20)
+_MXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # mxf: Flex-Memory    (max: 64)
+
+# Ordered list of Flex families: (gb_per_vcpu_ratio, prefix, category_label, valid_cpu_sizes)
 _FLEX_FAMILIES = [
     (2, "cxf", "Flex-Compute",  _CXF_CPU_SIZES),
     (4, "bxf", "Flex-Balanced", _BXF_CPU_SIZES),
     (8, "mxf", "Flex-Memory",   _MXF_CPU_SIZES),
 ]
 
+# ---------------------------------------------------------------------------
+# Fixed (non-Flex) profiles for servers that exceed Flex family maximums.
+# Used when all Flex families fail (typically cpus > 64 or extreme RAM ratios).
+# Source: IBM Cloud VPC x86-64 instance profiles, verified 2025-07-15.
+# Sorted by vcpu asc, then ram asc — first match wins.
+# ---------------------------------------------------------------------------
+_FIXED_PROFILES: list[tuple[int, int, str, str]] = [
+    # (vcpu, ram_gb, category, profile_name)
+    # Compute
+    ( 96,  192, "Compute",          "cx2-96x192"),
+    # Memory
+    ( 96,  768, "Memory",           "mx2-96x768"),
+    # Very High Memory (ux2d — 1:28 vCPU:RAM ratio)
+    (  8,  224, "Very High Memory", "ux2d-8x224"),
+    ( 16,  448, "Very High Memory", "ux2d-16x448"),
+    ( 36, 1008, "Very High Memory", "ux2d-36x1008"),
+    ( 52, 1456, "Very High Memory", "ux2d-52x1456"),
+    ( 72, 2016, "Very High Memory", "ux2d-72x2016"),
+    (100, 2800, "Very High Memory", "ux2d-100x2800"),
+    (112, 3072, "Very High Memory", "ux2d-112x3072"),
+    # Ultra High Memory (vx2d — 1:14 vCPU:RAM ratio)
+    (  4,   56, "Ultra High Memory", "vx2d-4x56"),
+    (  8,  112, "Ultra High Memory", "vx2d-8x112"),
+    ( 16,  224, "Ultra High Memory", "vx2d-16x224"),
+    ( 28,  392, "Ultra High Memory", "vx2d-28x392"),
+    ( 44,  616, "Ultra High Memory", "vx2d-44x616"),
+    ( 56,  784, "Ultra High Memory", "vx2d-56x784"),
+    ( 88, 1232, "Ultra High Memory", "vx2d-88x1232"),
+    (144, 2016, "Ultra High Memory", "vx2d-144x2016"),
+    (176, 2464, "Ultra High Memory", "vx2d-176x2464"),  # catalog maximum
+]
+
+# The largest fixed profile available — used as the assumption fallback when a
+# server genuinely exceeds every catalog entry (>176 vCPU or >3072 GB RAM).
+_FIXED_PROFILE_MAX = (176, 2464, "Ultra High Memory", "vx2d-176x2464")
+
 
 def _select_vpc_profile(cpus: int, ram_gb: int) -> tuple[str, str, str]:
-    """Return (category, profile_name, issues_flag) for the best-fit IBM VPC Flex profile.
+    """Return (category, profile_name, issues_flag) for the best-fit IBM VPC profile.
 
-    Algorithm — for each Flex family in priority order (cxf → bxf → mxf):
-      1. Find the smallest valid CPU size in that family's catalog >= requested CPUs.
-      2. Compute snap_ram = snap_cpu × family_ratio.
-      3. If snap_ram >= ram_gb  →  this family covers the spec; return it.
-      4. If snap_ram < ram_gb   →  this family can't cover the RAM; try the next family.
+    Algorithm (four steps — a server is ALWAYS assigned a profile):
 
-    This guarantees:
-      - Only CPU sizes that exist in IBM's actual catalog are emitted.
-      - bxf-12x48, bxf-20x80, bxf-24x96 are NEVER produced (bxf has no 12/20/24-vCPU size).
-      - A server with 12 vCPUs gets bxf-16x64 (next valid bxf CPU size), not bxf-12x48.
-      - RAM is always exactly snap_cpu × ratio — a valid catalog RAM value.
+    STEP 1 — Flex-Nano (nxf): if cpus <= 2 AND ram_gb <= 4, find the smallest nxf
+      profile where p_vcpu >= cpus AND p_ram >= ram_gb.  Returns flag="".
 
-    Flex families always take priority. Fixed families (Balanced, Compute, Memory, GPU,
-    High memory, Storage optimized) are reference-only in the Data Domains sheet.
+    STEP 2 — Flex families (cxf → bxf → mxf): for each family find the smallest
+      valid CPU size >= requested, then check snap_cpu × ratio >= ram_gb.
+      First family that satisfies both returns flag="".
+
+    STEP 3 — Fixed profiles (cx2, mx2, ux2d, vx2d up to 176 vCPU): scan
+      _FIXED_PROFILES for the first entry where p_vcpu >= cpus AND p_ram >= ram_gb.
+      Returns flag="fixed_profile" — row appears on main sheet with an assumption note.
+
+    STEP 4 — Assumption fallback: nothing in the catalog covers the spec.
+      Return the largest available profile (vx2d-176x2464) with flag="assumption".
+      Server stays on the MAIN sheet — never on the Exceptions sheet.
+
+    The Exceptions sheet is reserved for import/parse failures only.
 
     Returns:
-        category     — e.g. "Flex-Balanced"
-        profile_name — e.g. "bxf-16x64"
-        issues_flag  — "" for a clean match, "no_matching_profile" when no Flex family
-                       can cover the spec (→ Exceptions sheet).
+        category     — e.g. "Flex-Balanced", "Compute", "Ultra High Memory"
+        profile_name — e.g. "bxf-16x64", "cx2-96x192", "vx2d-176x2464"
+        issues_flag  — "" | "fixed_profile" | "assumption"
     """
     if cpus <= 0:
         cpus = 1
     if ram_gb <= 0:
         ram_gb = 1
 
-    # Try each Flex family in priority order
+    # STEP 1: Flex-Nano — tiny workloads below cxf minimum (<=2 vCPU, <=4 GB RAM)
+    if cpus <= 2 and ram_gb <= 4:
+        match = next(
+            (p for p in _NXF_PROFILES if p[0] >= cpus and p[1] >= ram_gb),
+            None,
+        )
+        if match:
+            return "Flex-Nano", match[2], ""
+
+    # STEP 2: Flex families (cxf → bxf → mxf)
     for ratio, prefix, category, cpu_sizes in _FLEX_FAMILIES:
-        # Step 1: find the smallest valid CPU size in this family >= requested
         snap_cpu = next((c for c in cpu_sizes if c >= cpus), None)
         if snap_cpu is None:
-            # This family has no CPU size large enough — try the next family
             continue
-
-        # Step 2: RAM this family provides at snap_cpu
         snap_ram = snap_cpu * ratio
-
-        # Step 3: does this family cover the requested RAM?
         if snap_ram >= ram_gb:
             return category, f"{prefix}-{snap_cpu}x{snap_ram}", ""
 
-        # Step 4: RAM not covered — try the next family (higher ratio)
-        # (e.g. bxf-8x32 can't cover 36 GB → fall through to mxf-8x64)
+    # STEP 3: Fixed profiles — covers >64 vCPU and high-memory-ratio servers
+    for p_vcpu, p_ram, p_cat, p_name in _FIXED_PROFILES:
+        if p_vcpu >= cpus and p_ram >= ram_gb:
+            return p_cat, p_name, "fixed_profile"
 
-    # No Flex family can cover the spec — flag for Exceptions sheet
-    return "Flex-Memory", f"mxf-{cpus}x{ram_gb}", "no_matching_profile"
+    # STEP 4: Assumption fallback — spec exceeds entire catalog
+    _, _, fb_cat, fb_name = _FIXED_PROFILE_MAX
+    return fb_cat, fb_name, "assumption"
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +418,9 @@ _THIN = Side(style="thin")
 _ALL_BORDERS = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _HEADER_FILL = PatternFill("solid", fgColor="D3D3D3")
 _HEADER_FONT = Font(bold=True)
-_ISSUE_FILL  = PatternFill("solid", fgColor="FFF2CC")   # light yellow — flags rows with issues
+_ISSUE_FILL      = PatternFill("solid", fgColor="FFF2CC")   # light yellow — disk clamping notes
+_FIXED_FILL      = PatternFill("solid", fgColor="FFF2CC")   # yellow — fixed (non-Flex) profile
+_ASSUMPTION_FILL = PatternFill("solid", fgColor="FFDDC1")   # orange — spec exceeds catalog max
 
 
 def _write_header(ws: Any, headers: list[str]) -> None:
@@ -483,6 +539,7 @@ def generate_vpc_calculator_xlsx(
     ps_ws.append(sub_row)
 
     # Per-VM: Compute + Data Volume rows
+    # (exception_rows reserved for future import/parse failures; not populated by profile mismatches)
     exception_rows: list[list[Any]] = []
 
     for rec in active:
@@ -506,7 +563,7 @@ def generate_vpc_calculator_xlsx(
         is_bm      = server_type == "bare_metal"
 
         os_family, os_image = _map_os_to_image(os_config)
-        category, family, no_profile = _select_vpc_profile(cpus, mem_gb)
+        category, family, profile_flag = _select_vpc_profile(cpus, mem_gb)
 
         # IBM Cloud VPC boot volume: 100 GB minimum, 250 GB maximum.
         # provisioned_mb is already clamped at normalisation time (ai_normalizer.py),
@@ -526,8 +583,12 @@ def generate_vpc_calculator_xlsx(
             issues_parts.append("boot_clamped_100")
         elif total_gb > 250:
             issues_parts.append("boot_clamped_250")
-        if no_profile:
-            issues_parts.append("no_matching_profile")
+        # Profile flags: fixed_profile and assumption stay on main sheet with notes.
+        # Neither goes to the Exceptions sheet (which is reserved for parse failures).
+        if profile_flag == "fixed_profile":
+            issues_parts.append("fixed_profile: non-Flex — verify ordering path")
+        elif profile_flag == "assumption":
+            issues_parts.append("assumption: spec exceeds catalog max — closest profile used")
         issues_str = ",".join(issues_parts)
 
         # Compute row
@@ -546,15 +607,12 @@ def generate_vpc_calculator_xlsx(
         _set(cmp_row, "Feature VS",                "{}")
         _set(cmp_row, "Operating System VS",       os_family)
         _set(cmp_row, "Operating System Version VS", os_image)
-        if not no_profile:
-            _set(cmp_row, "Compute Category VS",  category)
-            _set(cmp_row, "Compute Family VS",    family)
+        # Always set category and family — every server now gets a profile
+        _set(cmp_row, "Compute Category VS",  category)
+        _set(cmp_row, "Compute Family VS",    family)
 
         ps_ws.append(cmp_row)
-
-        # If no matching profile → also write to Exceptions sheet
-        if no_profile:
-            exception_rows.append(list(cmp_row))  # copy
+        # profile_flag rows stay on main sheet only; no Exceptions copy needed
 
         # Data Volume row — only written when provisioned disk exceeds the 250 GB boot cap.
         # data_gb = 0 when prov_gb <= 250, so no unnecessary data volume rows are created.
@@ -568,10 +626,15 @@ def generate_vpc_calculator_xlsx(
             _set(dv_row, "Data Center",           vpc_datacenter)
             ps_ws.append(dv_row)
 
-    # Style all data rows
+    # Style all data rows — three distinct fill levels
     for row_cells in ps_ws.iter_rows(min_row=2):
-        issues_val = row_cells[0].value  # column A = Issues
-        fill = _ISSUE_FILL if issues_val else None
+        issues_val = str(row_cells[0].value or "")
+        if "assumption:" in issues_val:
+            fill = _ASSUMPTION_FILL   # orange — spec exceeds catalog max
+        elif issues_val:
+            fill = _FIXED_FILL        # yellow — fixed profile or disk clamping note
+        else:
+            fill = None
         for cell in row_cells:
             cell.border = _ALL_BORDERS
             cell.alignment = Alignment(wrap_text=False)
@@ -593,25 +656,6 @@ def generate_vpc_calculator_xlsx(
 
     for ex_row in exception_rows:
         ex_ws.append(ex_row)
-        # Also add its data volume row for completeness
-        dv_row2 = _ps_row(len(PS_HEADERS))
-        _set(dv_row2, "IOPS",                  3)
-        # Recover prov_gb from the main sheet — find by Compute name
-        vm_name_ex = ex_row[_PS["Compute name"] - 1]
-        prov_gb_ex = 100  # fallback
-        for rec in active:
-            nd = rec["normalized_data"]
-            vinfo = nd.get("vinfo") or {}
-            if vinfo.get("vm_name") == vm_name_ex:
-                pm = int(vinfo.get("provisioned_mb") or vinfo.get("memory_mb") or 102400)
-                prov_gb_ex = max(1, round(pm / 1024))
-                break
-        _set(dv_row2, "Data Volume Size (GB)", prov_gb_ex)
-        _set(dv_row2, "Requirement Type",      "Data Volume")
-        _set(dv_row2, "Geography",             geography)
-        _set(dv_row2, "Region",                vpc_region)
-        _set(dv_row2, "Data Center",           vpc_datacenter)
-        ex_ws.append(dv_row2)
 
     for row_cells in ex_ws.iter_rows(min_row=2):
         for cell in row_cells:
