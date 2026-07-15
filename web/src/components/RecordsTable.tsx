@@ -49,6 +49,15 @@ function typeTag(serverType: string | null | undefined) {
   return <Tag type="gray" size="sm">{serverType}</Tag>;
 }
 
+function isMissingCpuOrRam(r: ServerRecord): boolean {
+  const nd = r.normalized_data ?? {};
+  const cpus  = safeGet(nd, 'vinfo.cpus', 'vinfo.cpu_count', 'vinfo.num_cpus');
+  const memMb = safeGet(nd, 'vinfo.memory_mb');
+  const cpuMissing = cpus == null || cpus === '' || Number(cpus) === 0;
+  const ramMissing = memMb == null || memMb === '' || Number(memMb) === 0;
+  return (cpuMissing || ramMissing) && r.processing_status !== 'error' && r.status !== 'error';
+}
+
 export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
   const [records, setRecords] = useState<ServerRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,13 +121,23 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
       || r.status === 'complete' || r.status === 'error'
   );
 
+  // Sort: servers missing CPU or RAM data float to top for human intervention.
+  // Within each group, preserve original order.
+  const sortedVisible = [...visibleRecords].sort((a, b) => {
+    const missingA = isMissingCpuOrRam(a);
+    const missingB = isMissingCpuOrRam(b);
+    if (missingA && !missingB) return -1;
+    if (!missingA && missingB) return 1;
+    return 0;
+  });
+
   const filtered = filterText
-    ? visibleRecords.filter(r => {
+    ? sortedVisible.filter(r => {
         const name = safeGet(r.normalized_data, 'vinfo.vm_name')
           ?? safeGet(r.raw_data, 'name', 'Server Name', 'VM', 'vm_name', 'hostname') ?? '';
         return String(name).toLowerCase().includes(filterText.toLowerCase());
       })
-    : visibleRecords;
+    : sortedVisible;
 
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
 
@@ -164,9 +183,25 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
 
   const powervsCount = visibleRecords.filter(r => (r.server_type ?? safeGet(r.normalized_data, 'server_type')) === 'powervs').length;
   const excludedCount = visibleRecords.filter(r => r.is_excluded).length;
+  const missingDataCount = visibleRecords.filter(r => isMissingCpuOrRam(r)).length;
 
   return (
     <>
+      {/* Warning banner — servers missing CPU or RAM (pinned above table) */}
+      {missingDataCount > 0 && (
+        <div style={{
+          background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 4,
+          padding: '0.6rem 1rem', marginBottom: '0.75rem',
+          display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem',
+        }}>
+          <WarningAlt size={16} style={{ color: '#b45309', flexShrink: 0 }} />
+          <span>
+            <strong>{missingDataCount} server{missingDataCount !== 1 ? 's' : ''}</strong> {missingDataCount === 1 ? 'is' : 'are'} missing CPU or RAM data and {missingDataCount === 1 ? 'has' : 'have'} been moved to the top of this list.
+            Review and edit or exclude {missingDataCount === 1 ? 'it' : 'them'} before exporting.
+          </span>
+        </div>
+      )}
+
       {/* Summary bar — PowerVS + Excluded counts */}
       {(powervsCount > 0 || excludedCount > 0) && (
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -232,12 +267,16 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                   return (
                     <>
                       <TableExpandRow
-                        {...getRowProps({ row })}
-                        key={row.id}
-                        style={{ ...(isFailed ? { background: '#fff8f8' } : {}), ...rowStyle }}
-                      >
-                        {row.cells.map((cell: any) => {
-                          // ── Type column ──────────────────────────────────
+                         {...getRowProps({ row })}
+                         key={row.id}
+                         style={{
+                           ...(isFailed ? { background: '#fff8f8' } : {}),
+                           ...(isMissingCpuOrRam(original) ? { background: '#fffbe6', borderLeft: '3px solid #ffc107' } : {}),
+                           ...rowStyle,
+                         }}
+                       >
+                         {row.cells.map((cell: any) => {
+                           // ── Type column ──────────────────────────────────
                           if (cell.info.header === 'server_type') {
                             if (cell.value === 'error') {
                               return (
@@ -275,18 +314,26 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                           }
 
                           // ── Server Name column ───────────────────────────
-                          if (cell.info.header === 'vm_name') {
-                            return (
-                              <TableCell key={cell.id}>
-                                <span
-                                  className="vm-name-cell"
-                                  style={isExcluded ? { textDecoration: 'line-through', color: '#8d8d8d' } : undefined}
-                                >
-                                  {cell.value}
-                                </span>
-                              </TableCell>
-                            );
-                          }
+                         if (cell.info.header === 'vm_name') {
+                           const missingCpu = !safeGet(original?.normalized_data ?? {}, 'vinfo.cpus', 'vinfo.cpu_count', 'vinfo.num_cpus');
+                           const missingRam = !safeGet(original?.normalized_data ?? {}, 'vinfo.memory_mb');
+                           return (
+                             <TableCell key={cell.id}>
+                               <span
+                                 className="vm-name-cell"
+                                 style={isExcluded ? { textDecoration: 'line-through', color: '#8d8d8d' } : undefined}
+                               >
+                                 {cell.value}
+                               </span>
+                               {missingCpu && !isFailed && (
+                                 <Tag type="red" size="sm" style={{ marginLeft: '0.4rem' }}>⚠ Missing CPU</Tag>
+                               )}
+                               {missingRam && !isFailed && (
+                                 <Tag type="red" size="sm" style={{ marginLeft: '0.25rem' }}>⚠ Missing RAM</Tag>
+                               )}
+                             </TableCell>
+                           );
+                         }
 
                           // ── AI Decisions column ──────────────────────────
                           if (cell.info.header === 'status_col') {

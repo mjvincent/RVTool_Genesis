@@ -320,6 +320,17 @@ export const api = {
     snoozeRecommendation: (): Promise<LLMSettingsResponse> =>
       fetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }).then(r => r.json()),
   },
+
+  pricingTemplate: {
+    /** Fill a PowerVS Price Estimator template and return the raw Response for streaming download. */
+    fill: (projectId: string, templateFile: File, datacenter: string = 'DAL10'): Promise<Response> => {
+      const form = new FormData();
+      form.append('template', templateFile);
+      form.append('job_id', projectId);
+      form.append('datacenter', datacenter);
+      return fetch(`${BASE}/pricing-template/fill`, { method: 'POST', body: form });
+    },
+  },
 };
 
 export async function downloadFile(response: Response, filename: string) {

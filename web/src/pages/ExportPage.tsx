@@ -104,6 +104,12 @@ export default function ExportPage() {
   const [pvsFullDone, setPvsFullDone]           = useState(false);
   const [pvsAsmDone, setPvsAsmDone]             = useState(false);
 
+  // Price Estimator filler — reset state on every use (no caching)
+  const [estimatorFile, setEstimatorFile]       = useState<File | null>(null);
+  const [estimatorLoading, setEstimatorLoading] = useState(false);
+  const [estimatorError, setEstimatorError]     = useState('');
+  const [estimatorDone, setEstimatorDone]       = useState(false);
+
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -207,6 +213,37 @@ export default function ExportPage() {
       setPvsFullDone(true);
     } catch { setError('Failed to generate PowerVS full RVTools export.'); }
     finally { setPvsFullLoading(false); }
+  }
+
+  async function handleFillEstimator() {
+    if (!estimatorFile) return;
+    setEstimatorLoading(true);
+    setEstimatorError('');
+    setEstimatorDone(false);
+    try {
+      const datacenter = (project?.pvs_datacenter ?? 'dal10').toUpperCase();
+      const resp = await api.pricingTemplate.fill(projectId, estimatorFile, datacenter);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error((body as any).detail || `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const disposition = resp.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      a.href = url;
+      a.download = match ? match[1] : `PowerVS_PriceEstimator_${projectId}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setEstimatorDone(true);
+      // Reset file input so user is prompted fresh next time
+      setEstimatorFile(null);
+    } catch (e: any) {
+      setEstimatorError(e?.message || 'Failed to fill estimator template.');
+    } finally {
+      setEstimatorLoading(false);
+    }
   }
 
   async function handlePVSAssumptions() {
@@ -523,6 +560,75 @@ export default function ExportPage() {
                   </Button>
                 )}
               </div>
+            </div>
+
+            {/* ── PowerVS Price Estimator filler (bottom of PowerVS section) ─── */}
+            <div style={{
+              borderTop: '1px solid #d0d0d0', paddingTop: '1.5rem', marginTop: '0.5rem',
+              background: '#f9f4ff', border: '1px solid #d4bbf7', borderRadius: 6,
+              padding: '1.25rem 1.5rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <Lightning size={18} style={{ color: '#6929c4', flexShrink: 0 }} />
+                <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#6929c4', margin: 0 }}>
+                  IBM PowerVS Price Estimator
+                </h3>
+              </div>
+              <p style={{ fontSize: '0.8125rem', color: '#3d3d3d', marginBottom: '1rem', lineHeight: 1.5 }}>
+                Upload the latest IBM PowerVS Price Estimator template (.xlsx) to auto-fill it with
+                this project's <strong>{powervsCount} LPAR{powervsCount !== 1 ? 's' : ''}</strong>.
+                You will be prompted to upload the template each time — no file is cached between uses.
+              </p>
+
+              {estimatorError && (
+                <div style={{
+                  background: '#fff1f1', border: '1px solid #da1e28', borderRadius: 4,
+                  padding: '0.5rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.8125rem', color: '#da1e28',
+                }}>
+                  {estimatorError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <label
+                  htmlFor="estimator-file-input"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                    padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500,
+                    background: '#fff', border: '1px solid #8a3ffc', borderRadius: 4,
+                    color: '#6929c4', cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  📂 {estimatorFile ? estimatorFile.name : 'Choose Estimator Template…'}
+                </label>
+                <input
+                  id="estimator-file-input"
+                  type="file"
+                  accept=".xlsx,.XLSX"
+                  style={{ display: 'none' }}
+                  // Reset key forces a fresh input element so the same file can be re-selected
+                  key={estimatorDone ? 'reset' : 'active'}
+                  onChange={e => {
+                    const f = e.target.files?.[0] ?? null;
+                    setEstimatorFile(f);
+                    setEstimatorError('');
+                    setEstimatorDone(false);
+                  }}
+                />
+                <Button
+                  renderIcon={estimatorDone ? Checkmark : DocumentDownload}
+                  kind={estimatorDone ? 'ghost' : 'primary'}
+                  size="md"
+                  disabled={!estimatorFile || estimatorLoading}
+                  onClick={handleFillEstimator}
+                >
+                  {estimatorLoading ? 'Filling…' : estimatorDone ? 'Downloaded ✓' : 'Fill & Download'}
+                </Button>
+                {estimatorLoading && <InlineLoading description="Filling template…" />}
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#6f6f6f', marginTop: '0.75rem', marginBottom: 0 }}>
+                The filled file will be named <em>PowerVS_PriceEstimator_{'{ProjectName}'}_{'{timestamp}'}.xlsx</em>
+              </p>
             </div>
           </>
         )}
