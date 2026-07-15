@@ -51,9 +51,9 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 # Per-family CPU size lists — derived verbatim from _DATA_DOMAINS_ROWS Flex entries.
 # These are the ONLY valid CPU counts for each family in IBM Cloud VPC VSI.
-_CXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64, 96]   # cxf: Flex-Compute
-_BXF_CPU_SIZES = [2, 4, 8, 16, 32, 48, 64, 96]        # bxf: Flex-Balanced  (no 12, 20, 24)
-_MXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64, 96]   # mxf: Flex-Memory
+_CXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # cxf: Flex-Compute   (IBM catalog max: 64)
+_BXF_CPU_SIZES = [2, 4, 8, 16, 32, 48, 64]        # bxf: Flex-Balanced  (IBM catalog max: 64; no 12, 20, 24)
+_MXF_CPU_SIZES = [2, 4, 8, 16, 24, 32, 48, 64]   # mxf: Flex-Memory    (IBM catalog max: 64)
 
 # Ordered list of Flex families:
 #   (gb_per_vcpu_ratio, prefix, category_label, valid_cpu_sizes)

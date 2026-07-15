@@ -6,7 +6,8 @@ Covers:
   - Bug B fix: category boundary (no gray zone — exact ratio is the boundary)
   - Boundary conditions at exact ratio values
   - CPU snapping (non-standard CPU counts round up to nearest standard size)
-  - Oversized specs (CPU > 128 or ratio > 8) → no_matching_profile
+  - Oversized specs (CPU > 64 or ratio > 8) → no_matching_profile
+  - IBM catalog max: 64 vCPUs across all three Flex families (cxf/bxf/mxf)
 """
 import sys
 import os
@@ -42,10 +43,17 @@ class TestFlexCompute:
         assert flag == ""
 
     def test_max_flex_compute(self):
-        cat, name, flag = _select_vpc_profile(96, 192)
+        # cxf catalog max is 64 vCPUs (cxf-64x128). 96 vCPUs does NOT exist in IBM catalog.
+        cat, name, flag = _select_vpc_profile(64, 128)
         assert cat == "Flex-Compute"
-        assert name == "cxf-96x192"
+        assert name == "cxf-64x128"
         assert flag == ""
+
+    def test_above_max_flex_compute_96cpu_is_exception(self):
+        # msplhn100a case: 96 vCPUs — exceeds ALL Flex family max (64) → no_matching_profile
+        # cxf-96x192 does NOT exist in IBM's catalog (cx2-96x192 is a fixed profile, not Flex)
+        _, _, flag = _select_vpc_profile(96, 192)
+        assert flag == "no_matching_profile"
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +198,21 @@ class TestCPUSnapping:
 # ---------------------------------------------------------------------------
 
 class TestNoMatchingProfile:
-    def test_cpu_exceeds_96_mxf_max(self):
-        # mxf largest valid CPU is 96. 128 vCPUs exceeds it → no_matching_profile.
+    def test_cpu_exceeds_64_max(self):
+        # All Flex families top out at 64 vCPUs. 65+ → no_matching_profile.
+        _, _, flag = _select_vpc_profile(65, 130)
+        assert flag == "no_matching_profile"
+
+    def test_cpu_96_always_exception(self):
+        # 96 vCPUs exceeds all Flex family maximums (cxf/bxf/mxf all max at 64)
+        _, _, flag = _select_vpc_profile(96, 192)
+        assert flag == "no_matching_profile"
+
+    def test_cpu_128_always_exception(self):
         _, _, flag = _select_vpc_profile(128, 1024)
         assert flag == "no_matching_profile"
 
-    def test_cpu_exceeds_96_bxf_max(self):
-        # bxf largest valid CPU is also 96.
+    def test_cpu_100_always_exception(self):
         _, _, flag = _select_vpc_profile(100, 400)
         assert flag == "no_matching_profile"
 
@@ -205,16 +221,16 @@ class TestNoMatchingProfile:
         _, _, flag = _select_vpc_profile(8, 1000)
         assert flag == "no_matching_profile"
 
-    def test_mxf_max_cpu_96_just_fits(self):
-        # mxf largest is 96-vCPU × 8 GB = 768 GB → exactly fits
-        cat, name, flag = _select_vpc_profile(96, 768)
+    def test_mxf_max_cpu_64_just_fits(self):
+        # mxf largest is 64-vCPU × 8 GB = 512 GB → exactly fits
+        cat, name, flag = _select_vpc_profile(64, 512)
         assert cat == "Flex-Memory"
-        assert name == "mxf-96x768"
+        assert name == "mxf-64x512"
         assert flag == ""
 
-    def test_mxf_max_cpu_96_just_over(self):
-        # 96 vCPU / 769 GB → 769 > 768 → no Flex family can cover it
-        _, _, flag = _select_vpc_profile(96, 769)
+    def test_mxf_max_cpu_64_just_over(self):
+        # 64 vCPU / 513 GB → ratio > 8 → no Flex family can cover it
+        _, _, flag = _select_vpc_profile(64, 513)
         assert flag == "no_matching_profile"
 
 
