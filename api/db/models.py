@@ -239,4 +239,8 @@ class LLMSettings(Base):
         String, nullable=True, default="claude-3-haiku-20240307"
     )
 
+    # Model recommendation rollback support
+    previous_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recommendation_snoozed_until: Mapped[datetime | None] = mapped_column(nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)

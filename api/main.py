@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SECRET_KEY = "rvtool-genesis-change-me-in-production"
+_RECOMMENDATION_CHECK_INTERVAL = 7 * 24 * 3600  # 7 days in seconds
+
+
+async def _recommendation_checker_loop() -> None:
+    """Background task: check for model recommendations at startup and weekly.
+
+    Runs once immediately on startup, then sleeps for 7 days and repeats.
+    Only logs the result — the UI polls GET /api/settings/model-recommendation
+    on the Settings page load; there is no push mechanism.
+    """
+    from db.database import AsyncSessionLocal
+    from services.model_catalog import get_recommendation
+    from routers.settings import _get_or_create_row, _active_model
+
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                row = await _get_or_create_row(db)
+                rec = get_recommendation(row.provider, _active_model(row))
+                if rec:
+                    logger.info(
+                        "Model recommendation available — provider=%s current=%s recommended=%s reason=%r",
+                        rec.provider, rec.current_model, rec.recommended_model, rec.reason,
+                    )
+                else:
+                    logger.info(
+                        "Model recommendation check complete — no upgrade available for provider=%s",
+                        row.provider,
+                    )
+        except Exception:  # noqa: BLE001
+            logger.exception("Model recommendation check failed — will retry in 7 days")
+
+        await asyncio.sleep(_RECOMMENDATION_CHECK_INTERVAL)
 
 
 @asynccontextmanager
@@ -25,7 +59,13 @@ async def lifespan(app: FastAPI):
             "known key. Set a strong SECRET_KEY in your .env file before using "
             "watsonx.ai, OpenAI, or Anthropic providers."
         )
+    recommendation_task = asyncio.create_task(_recommendation_checker_loop())
     yield
+    recommendation_task.cancel()
+    try:
+        await recommendation_task
+    except asyncio.CancelledError:
+        pass
     logger.info("RVTool Genesis API shutting down.")
 
 

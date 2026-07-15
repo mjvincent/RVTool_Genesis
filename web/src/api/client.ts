@@ -114,7 +114,21 @@ export interface LLMSettingsResponse {
   openai_model: string | null;
   anthropic_api_key_hint: string | null;
   anthropic_model: string | null;
+  previous_model: string | null;
   updated_at: string;
+}
+
+export interface ModelRecommendation {
+  provider: string;
+  current_model: string;
+  recommended_model: string;
+  recommended_label: string;
+  reason: string;
+}
+
+export interface ModelRecommendationCheck {
+  recommendation: ModelRecommendation | null;
+  snoozed: boolean;
 }
 
 export interface LLMSettingsSave {
@@ -297,6 +311,14 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }).then(r => r.json()),
+    getRecommendation: (): Promise<ModelRecommendationCheck> =>
+      fetch(`${BASE}/settings/model-recommendation`).then(r => r.json()),
+    applyRecommendation: (): Promise<LLMSettingsResponse> =>
+      fetch(`${BASE}/settings/model-recommendation/apply`, { method: 'POST' }).then(r => r.json()),
+    rollbackModel: (): Promise<LLMSettingsResponse> =>
+      fetch(`${BASE}/settings/model-recommendation/rollback`, { method: 'POST' }).then(r => r.json()),
+    snoozeRecommendation: (): Promise<LLMSettingsResponse> =>
+      fetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }).then(r => r.json()),
   },
 };
 

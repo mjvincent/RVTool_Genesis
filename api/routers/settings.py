@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,7 @@ from db.database import get_db
 from db.models import LLMSettings
 from schemas.settings import LLMSettingsResponse, LLMSettingsSave, LLMTestResult, _mask
 from services.crypto import decrypt, encrypt
+from services.model_catalog import ModelRecommendation, get_recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ def _row_to_response(row: LLMSettings) -> LLMSettingsResponse:
         openai_model=row.openai_model,
         anthropic_api_key_hint=_mask(row.anthropic_api_key_enc),
         anthropic_model=row.anthropic_model,
+        previous_model=row.previous_model,
         updated_at=row.updated_at,
     )
 
@@ -276,3 +279,138 @@ async def _test_anthropic(payload: LLMSettingsSave, db: AsyncSession) -> str:
     )
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Model recommendation endpoints
+# ---------------------------------------------------------------------------
+
+class _RecommendationResponse(LLMSettingsResponse):
+    """Extended settings response that includes recommendation state."""
+    pass  # LLMSettingsResponse already has previous_model
+
+
+from pydantic import BaseModel as _BaseModel
+
+class _RecommendationCheck(_BaseModel):
+    recommendation: dict | None
+    snoozed: bool
+
+
+def _recommendation_to_dict(rec: ModelRecommendation | None) -> dict | None:
+    if rec is None:
+        return None
+    return {
+        "provider": rec.provider,
+        "current_model": rec.current_model,
+        "recommended_model": rec.recommended_model,
+        "recommended_label": rec.recommended_label,
+        "reason": rec.reason,
+    }
+
+
+def _is_snoozed(row: LLMSettings) -> bool:
+    snooze = row.recommendation_snoozed_until
+    if snooze is None:
+        return False
+    # Handle both tz-aware and tz-naive datetimes
+    now = datetime.now(timezone.utc)
+    if snooze.tzinfo is None:
+        snooze = snooze.replace(tzinfo=timezone.utc)
+    return snooze > now
+
+
+def _active_model(row: LLMSettings) -> str | None:
+    """Return the currently configured model ID for the active provider."""
+    from core.config import settings as cfg
+    p = row.provider
+    if p == "ollama":
+        return row.ollama_model or cfg.ollama_model
+    if p == "watsonx":
+        return row.watsonx_model
+    if p == "openai":
+        return row.openai_model
+    if p == "anthropic":
+        return row.anthropic_model
+    return None
+
+
+@router.get("/settings/model-recommendation", response_model=_RecommendationCheck)
+async def get_model_recommendation(db: AsyncSession = Depends(get_db)) -> _RecommendationCheck:
+    """Return the current model recommendation (if any) and snooze state."""
+    row = await _get_or_create_row(db)
+    snoozed = _is_snoozed(row)
+    if snoozed:
+        return _RecommendationCheck(recommendation=None, snoozed=True)
+    rec = get_recommendation(row.provider, _active_model(row))
+    return _RecommendationCheck(recommendation=_recommendation_to_dict(rec), snoozed=False)
+
+
+@router.post("/settings/model-recommendation/apply", response_model=LLMSettingsResponse)
+async def apply_model_recommendation(db: AsyncSession = Depends(get_db)) -> LLMSettingsResponse:
+    """One-click upgrade: save current model as previous_model, apply recommended model."""
+    row = await _get_or_create_row(db)
+    current = _active_model(row)
+    rec = get_recommendation(row.provider, current)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No recommendation available for the current provider and model.")
+
+    # Save previous model for rollback
+    row.previous_model = current
+    # Apply recommended model to the active provider field
+    p = row.provider
+    if p == "ollama":
+        row.ollama_model = rec.recommended_model
+    elif p == "watsonx":
+        row.watsonx_model = rec.recommended_model
+    elif p == "openai":
+        row.openai_model = rec.recommended_model
+    elif p == "anthropic":
+        row.anthropic_model = rec.recommended_model
+    # Clear snooze so the user sees fresh recommendations on next check
+    row.recommendation_snoozed_until = None
+
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Model recommendation applied — provider=%s new_model=%s previous=%s",
+                p, rec.recommended_model, current)
+    return _row_to_response(row)
+
+
+@router.post("/settings/model-recommendation/rollback", response_model=LLMSettingsResponse)
+async def rollback_model(db: AsyncSession = Depends(get_db)) -> LLMSettingsResponse:
+    """Revert to the previous model (undo a one-click recommendation apply)."""
+    row = await _get_or_create_row(db)
+    if not row.previous_model:
+        raise HTTPException(status_code=404, detail="No previous model to roll back to.")
+
+    prev = row.previous_model
+    p = row.provider
+    if p == "ollama":
+        row.ollama_model = prev
+    elif p == "watsonx":
+        row.watsonx_model = prev
+    elif p == "openai":
+        row.openai_model = prev
+    elif p == "anthropic":
+        row.anthropic_model = prev
+
+    row.previous_model = None  # clear rollback state after use
+    row.recommendation_snoozed_until = None
+
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Model rolled back — provider=%s restored_model=%s", p, prev)
+    return _row_to_response(row)
+
+
+@router.post("/settings/model-recommendation/snooze", response_model=LLMSettingsResponse)
+async def snooze_recommendation(db: AsyncSession = Depends(get_db)) -> LLMSettingsResponse:
+    """Snooze the recommendation banner for 7 days."""
+    row = await _get_or_create_row(db)
+    # Store as naive UTC — DB column is TIMESTAMP WITHOUT TIME ZONE
+    row.recommendation_snoozed_until = datetime.utcnow() + timedelta(days=7)
+    await db.commit()
+    await db.refresh(row)
+    logger.info("Model recommendation snoozed for 7 days — provider=%s", row.provider)
+    return _row_to_response(row)

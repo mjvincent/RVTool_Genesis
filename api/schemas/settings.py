@@ -67,6 +67,9 @@ class LLMSettingsResponse(BaseModel):
     anthropic_api_key_hint: str | None
     anthropic_model: str | None
 
+    # Model recommendation rollback
+    previous_model: str | None = None
+
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

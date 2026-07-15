@@ -19,81 +19,82 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 # ---------------------------------------------------------------------------
-# IBM VPC Flex profile selection table
-# Format: (min_cpus, max_cpus, min_ram_gb_per_cpu, max_ram_gb_per_cpu) -> (category, prefix)
+# IBM Cloud VPC compute families (confirmed from IBM Cloud Solutioning tool, mid-2025)
 #
-# Rules derived from the IBM Cloud VPC instance profile families:
-#   Flex-Compute  (cxf): ratio ≤ 2  GB/vCPU
-#   Flex-Balanced (bxf): ratio  3–5 GB/vCPU
-#   Flex-Memory   (mxf): ratio ≥ 6  GB/vCPU
+# The solutioning tool exposes 10 families:
+#   Flex-Compute, Flex-Balanced, Flex-Memory, Flex-Nano,
+#   Balanced, Compute, Memory, GPU, High memory, Storage optimized
+#
+# Selection priority (Flex families take priority per design requirement):
+#   1. Flex-Compute  (cxf, 2 GB/vCPU) — ratio ≤ 2.0
+#   2. Flex-Balanced (bxf, 4 GB/vCPU) — ratio ≤ 4.0
+#   3. Flex-Memory   (mxf, 8 GB/vCPU) — ratio ≤ 8.0
+#   4. no_matching_profile             — ratio > 8.0 or CPU > 128 (→ Exceptions sheet)
+#
+# Fixed families (Balanced/Compute/Memory/GPU/High memory/Storage optimized) are present
+# in the Data Domains reference sheet but are NOT used for automatic profile selection —
+# Flex profiles cover the same specs and are the recommended migration path.
 #
 # Profile name pattern: {prefix}-{cpu}x{ram}
-# IBM Flex profiles allow any CPU count and any RAM as long as RAM is a multiple of
-# the minimum ratio.  The nearest standard size that *covers* the requested spec is chosen.
+# RAM must equal snap_cpu × ratio (i.e. snap_cpu × ratio × 1 minimum, then × N for overflows).
+# CPU is snapped to the nearest standard size >= requested.
 # ---------------------------------------------------------------------------
 
-_FLEX_PROFILE_RULES = [
-    # (ratio_min, ratio_max_inclusive, category, prefix)
-    (0.0,  2.5,  "Flex-Compute",  "cxf"),
-    (2.5,  5.5,  "Flex-Balanced", "bxf"),
-    (5.5,  99.0, "Flex-Memory",   "mxf"),
+# Ordered list of Flex families: (gb_per_vcpu_ratio, prefix, category_label)
+# The algorithm picks the FIRST entry whose ratio covers the required ram_gb/snap_cpu.
+_FLEX_FAMILIES = [
+    (2, "cxf", "Flex-Compute"),
+    (4, "bxf", "Flex-Balanced"),
+    (8, "mxf", "Flex-Memory"),
 ]
 
-# IBM Flex profiles snap CPU counts to standard values:
-_FLEX_CPU_SIZES = [1, 2, 4, 8, 12, 16, 20, 24, 32, 48, 64, 96, 128]
-
-# IBM VPC standard RAM multiples per category (GB per vCPU baseline):
-_FLEX_RAM_RATIO = {
-    "cxf": 2,   # Flex-Compute  → 2 GB/vCPU baseline
-    "bxf": 4,   # Flex-Balanced → 4 GB/vCPU baseline
-    "mxf": 8,   # Flex-Memory   → 8 GB/vCPU baseline
-}
+# IBM Flex profiles snap CPU counts to these standard values (smallest ≥ requested):
+_FLEX_CPU_SIZES = [2, 4, 8, 12, 16, 20, 24, 32, 48, 64, 96, 128]
 
 
 def _select_vpc_profile(cpus: int, ram_gb: int) -> tuple[str, str, str]:
-    """Return (category, family_str, issues_flag) for an IBM VPC flex profile.
+    """Return (category, profile_name, issues_flag) for the best-fit IBM VPC Flex profile.
 
-    family_str is the full profile name e.g. 'cxf-8x16'.
-    issues_flag is '' for a clean match or 'no_matching_profile' when the
-    requested spec exceeds all standard profile sizes.
+    Uses the "smallest covering ratio" algorithm:
+      1. Snap CPU up to the nearest standard Flex size.
+      2. Compute required_ratio = ram_gb / snap_cpu.
+      3. Pick the first Flex family whose ratio >= required_ratio.
+      4. snap_ram = snap_cpu × that ratio.
+
+    This correctly handles both the RAM-rounding bug (snap_ram is always a valid
+    cpu-step multiple) and the category-boundary gray-zone bug (no fuzzy thresholds).
+
+    Flex families always take priority. Fixed families (Balanced, Compute, Memory, GPU,
+    High memory, Storage optimized) are reference-only in the Data Domains sheet.
+
+    Returns:
+        category    — e.g. "Flex-Balanced"
+        profile_name — e.g. "bxf-8x32"
+        issues_flag — "" for a clean match, "no_matching_profile" when CPU > 128 or
+                      the required RAM/vCPU ratio exceeds 8 (beyond Flex-Memory capacity).
     """
     if cpus <= 0:
         cpus = 1
     if ram_gb <= 0:
         ram_gb = 1
 
-    ratio = ram_gb / cpus
-
-    # Pick category
-    category, prefix = "Flex-Compute", "cxf"
-    for r_min, r_max, cat, pfx in _FLEX_PROFILE_RULES:
-        if r_min <= ratio <= r_max:
-            category, prefix = cat, pfx
-            break
-
-    # Snap CPU to the next standard size >= requested
+    # Step 1: snap CPU to next standard Flex size
     snap_cpu = next((c for c in _FLEX_CPU_SIZES if c >= cpus), None)
     if snap_cpu is None:
-        # Exceeds largest standard size
-        return category, f"{prefix}-{cpus}x{ram_gb}", "no_matching_profile"
+        # CPU count exceeds the largest Flex profile (128) — flag for Exceptions sheet
+        return "Flex-Memory", f"mxf-{cpus}x{ram_gb}", "no_matching_profile"
 
-    # RAM = snap_cpu × baseline_ratio, rounded up to nearest multiple
-    base_ratio = _FLEX_RAM_RATIO[prefix]
-    snap_ram = snap_cpu * base_ratio
-    # If the requested RAM is larger, round up to the next multiple
-    if ram_gb > snap_ram:
-        snap_ram = math.ceil(ram_gb / base_ratio) * base_ratio
-        # Recalculate if this pushes us into another category
-        new_ratio = snap_ram / snap_cpu
-        for r_min, r_max, cat, pfx in _FLEX_PROFILE_RULES:
-            if r_min <= new_ratio <= r_max:
-                category, prefix = cat, pfx
-                break
-        snap_ram = snap_cpu * _FLEX_RAM_RATIO[prefix]
-        if snap_ram < ram_gb:
-            snap_ram = math.ceil(ram_gb / _FLEX_RAM_RATIO[prefix]) * _FLEX_RAM_RATIO[prefix]
+    # Step 2: required ratio at the snapped CPU count
+    required_ratio = ram_gb / snap_cpu
 
-    return category, f"{prefix}-{snap_cpu}x{snap_ram}", ""
+    # Step 3 + 4: find the smallest Flex family that covers the requirement
+    for ratio, prefix, category in _FLEX_FAMILIES:
+        if ratio >= required_ratio:
+            snap_ram = snap_cpu * ratio
+            return category, f"{prefix}-{snap_cpu}x{snap_ram}", ""
+
+    # ratio > 8.0 — beyond Flex-Memory capacity; flag for Exceptions sheet
+    return "Flex-Memory", f"mxf-{snap_cpu}x{ram_gb}", "no_matching_profile"
 
 
 # ---------------------------------------------------------------------------

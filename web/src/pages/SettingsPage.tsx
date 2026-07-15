@@ -10,7 +10,7 @@ import {
   Tag,
 } from '@carbon/react';
 import { Settings as SettingsIcon } from '@carbon/icons-react';
-import { api, LLMProvider, LLMSettingsResponse, LLMSettingsSave } from '../api/client';
+import { api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation } from '../api/client';
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -63,6 +63,11 @@ export default function SettingsPage() {
   const [antKeyHint, setAntKeyHint] = useState<string | null>(null);
   const [antModel, setAntModel] = useState(DEFAULTS.anthropic_model);
 
+  // Model recommendation state
+  const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null);
+  const [previousModel, setPreviousModel] = useState<string | null>(null);
+  const [recLoading, setRecLoading] = useState(false);
+
   // UI state
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -70,24 +75,69 @@ export default function SettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; latency_ms?: number | null; preview?: string | null; error?: string | null } | null>(null);
 
-  // ── load current settings ──────────────────────────────────────────────────
+  // ── load current settings + recommendation ─────────────────────────────────
+  function applySettingsToState(s: LLMSettingsResponse) {
+    setProvider(s.provider);
+    setOllamaUrl(s.ollama_base_url || DEFAULTS.ollama_base_url);
+    setOllamaModel(s.ollama_model || DEFAULTS.ollama_model);
+    setWxKeyHint(s.watsonx_api_key_hint);
+    setWxProjectId(s.watsonx_project_id || '');
+    setWxUrl(s.watsonx_url || DEFAULTS.watsonx_url);
+    setWxModel(s.watsonx_model || DEFAULTS.watsonx_model);
+    setOaiKeyHint(s.openai_api_key_hint);
+    setOaiBaseUrl(s.openai_base_url || DEFAULTS.openai_base_url);
+    setOaiModel(s.openai_model || DEFAULTS.openai_model);
+    setAntKeyHint(s.anthropic_api_key_hint);
+    setAntModel(s.anthropic_model || DEFAULTS.anthropic_model);
+    setPreviousModel(s.previous_model);
+  }
+
   useEffect(() => {
-    api.settings.get().then((s: LLMSettingsResponse) => {
-      setProvider(s.provider);
-      setOllamaUrl(s.ollama_base_url || DEFAULTS.ollama_base_url);
-      setOllamaModel(s.ollama_model || DEFAULTS.ollama_model);
-      setWxKeyHint(s.watsonx_api_key_hint);
-      setWxProjectId(s.watsonx_project_id || '');
-      setWxUrl(s.watsonx_url || DEFAULTS.watsonx_url);
-      setWxModel(s.watsonx_model || DEFAULTS.watsonx_model);
-      setOaiKeyHint(s.openai_api_key_hint);
-      setOaiBaseUrl(s.openai_base_url || DEFAULTS.openai_base_url);
-      setOaiModel(s.openai_model || DEFAULTS.openai_model);
-      setAntKeyHint(s.anthropic_api_key_hint);
-      setAntModel(s.anthropic_model || DEFAULTS.anthropic_model);
+    Promise.all([
+      api.settings.get(),
+      api.settings.getRecommendation(),
+    ]).then(([s, rec]) => {
+      applySettingsToState(s);
+      setRecommendation(rec.recommendation);
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
+
+  // ── recommendation handlers ────────────────────────────────────────────────
+  async function handleApplyRecommendation() {
+    setRecLoading(true);
+    try {
+      const s = await api.settings.applyRecommendation();
+      applySettingsToState(s);
+      // Re-check recommendation after applying (should now return null)
+      const rec = await api.settings.getRecommendation();
+      setRecommendation(rec.recommendation);
+    } catch { /* ignore */ } finally {
+      setRecLoading(false);
+    }
+  }
+
+  async function handleRollback() {
+    setRecLoading(true);
+    try {
+      const s = await api.settings.rollbackModel();
+      applySettingsToState(s);
+      const rec = await api.settings.getRecommendation();
+      setRecommendation(rec.recommendation);
+    } catch { /* ignore */ } finally {
+      setRecLoading(false);
+    }
+  }
+
+  async function handleSnooze() {
+    setRecLoading(true);
+    try {
+      await api.settings.snoozeRecommendation();
+      setRecommendation(null);
+    } catch { /* ignore */ } finally {
+      setRecLoading(false);
+    }
+  }
 
   // ── build payload ──────────────────────────────────────────────────────────
   function buildPayload(): LLMSettingsSave {
@@ -114,13 +164,13 @@ export default function SettingsPage() {
     setTestResult(null);
     try {
       const s = await api.settings.save(buildPayload());
-      // refresh hints from server response
-      setWxKeyHint(s.watsonx_api_key_hint);
-      setOaiKeyHint(s.openai_api_key_hint);
-      setAntKeyHint(s.anthropic_api_key_hint);
+      applySettingsToState(s);
       // clear plaintext key fields after save
       setWxKey(''); setOaiKey(''); setAntKey('');
       setSaveSuccess(true);
+      // Refresh recommendation after provider/model change
+      const rec = await api.settings.getRecommendation();
+      setRecommendation(rec.recommendation);
     } catch (e: any) {
       setSaveError(e?.message || 'Failed to save settings');
     } finally {
@@ -166,6 +216,59 @@ export default function SettingsPage() {
       </div>
 
       <div className="page-body" style={{ maxWidth: 680 }}>
+
+        {/* ── Model recommendation banner ──────────────────────────── */}
+        {recommendation && (
+          <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#edf4ff', border: '1px solid #a6c8ff', borderLeft: '4px solid #0f62fe' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 600, color: '#161616', marginBottom: '0.25rem', fontSize: '0.875rem' }}>
+                  Model update available
+                  <Tag type="blue" size="sm" style={{ marginLeft: '0.5rem', verticalAlign: 'middle' }}>Recommended</Tag>
+                </p>
+                <p style={{ color: '#393939', fontSize: '0.8125rem', marginBottom: '0.5rem' }}>
+                  <strong>{recommendation.recommended_label}</strong> ({recommendation.recommended_model})
+                </p>
+                <p style={{ color: '#525252', fontSize: '0.8125rem', lineHeight: 1.5 }}>{recommendation.reason}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {recLoading ? (
+                  <InlineLoading description="Updating…" style={{ flex: 'none' }} />
+                ) : (
+                  <>
+                    <Button kind="primary" size="sm" onClick={handleApplyRecommendation}>
+                      Use recommended
+                    </Button>
+                    {previousModel && (
+                      <Button kind="secondary" size="sm" onClick={handleRollback}>
+                        Rollback to {previousModel.split('/').pop()}
+                      </Button>
+                    )}
+                    <Button kind="ghost" size="sm" onClick={handleSnooze}>
+                      Dismiss for 7 days
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Rollback available even when no current recommendation */}
+        {!recommendation && previousModel && (
+          <div style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', background: '#f4f4f4', border: '1px solid #e0e0e0', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <p style={{ flex: 1, fontSize: '0.8125rem', color: '#525252', margin: 0 }}>
+              Previously updated from <strong>{previousModel.split('/').pop()}</strong>.
+            </p>
+            {recLoading ? (
+              <InlineLoading description="Reverting…" style={{ flex: 'none' }} />
+            ) : (
+              <Button kind="ghost" size="sm" onClick={handleRollback}>
+                Rollback
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* ── Provider picker ─────────────────────────────────────── */}
         <section style={{ marginBottom: '2rem' }}>
