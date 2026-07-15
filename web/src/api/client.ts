@@ -322,14 +322,21 @@ export const api = {
   },
 
   pricingTemplate: {
-    /** Fill a PowerVS Price Estimator template and return the raw Response for streaming download. */
-    fill: (projectId: string, templateFile: File, datacenter: string = 'DAL10'): Promise<Response> => {
+    getStatus: (projectId: string): Promise<{ has_template: boolean; filename: string | null; updated_at: string | null }> =>
+      fetch(`${BASE}/projects/${projectId}/pricing-template/status`).then(r => r.json()),
+    upload: (projectId: string, file: File): Promise<{ id: string; project_id: string; filename: string; created_at: string; updated_at: string }> => {
       const form = new FormData();
-      form.append('template', templateFile);
-      form.append('job_id', projectId);
-      form.append('datacenter', datacenter);
-      return fetch(`${BASE}/pricing-template/fill`, { method: 'POST', body: form });
+      form.append('file', file);
+      return fetch(`${BASE}/projects/${projectId}/pricing-template`, { method: 'POST', body: form }).then(async r => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: 'Upload failed' }));
+          throw new Error(err.detail || 'Upload failed');
+        }
+        return r.json();
+      });
     },
+    populate: (projectId: string): Promise<Response> =>
+      fetch(`${BASE}/projects/${projectId}/export/pricing-estimator`, { method: 'POST' }),
   },
 };
 

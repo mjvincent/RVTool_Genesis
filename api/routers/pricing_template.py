@@ -1,25 +1,23 @@
-"""PowerVS Price Estimator template filler router.
-
-POST /api/pricing-template/fill
-  Accepts a multipart form with:
-    - template: UploadFile  (.xlsx — the blank IBM PowerVS Price Estimator)
-    - job_id:   str         (project UUID — used to look up PowerVS server records)
-    - datacenter: str       (optional override, default 'DAL10')
-  Returns: filled .xlsx as a streaming download.
-"""
+"""Pricing template router — upload IBM Price Estimator and populate it with PowerVS data."""
 from __future__ import annotations
 
+import io
+import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import Project, ServerRecord
-from services.pricing_template_filler import fill_powervs_price_estimator
+from db.models import PricingTemplate, Project, ServerRecord
+from routers.projects import _get_project_or_404
+from schemas.pricing_template import PricingTemplateResponse, PricingTemplateStatus
+from services import pricing_template_filler
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pricing-template"])
 
@@ -27,120 +25,212 @@ _XLSX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
+_EXPECTED_SHEET = "Multiple LPAR Price Estimate"
 
-@router.post("/fill")
-async def fill_price_estimator(
-    template: UploadFile,
-    job_id: str = Form(...),
-    datacenter: str = Form("DAL10"),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
-    """Fill a PowerVS Price Estimator template with LPAR data from a project.
 
-    The template is the blank IBM PowerVS Price Estimator .xlsx file the user
-    uploads fresh each time.  It is never cached — each call receives a new upload.
-    """
-    # Validate project exists
-    try:
-        project_uuid = uuid.UUID(job_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid job_id (must be a UUID)")
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    result = await db.execute(select(Project).where(Project.id == project_uuid))
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project {job_id} not found")
-
-    # Fetch PowerVS server records for this project
-    rec_result = await db.execute(
+async def _fetch_powervs_records(project_id: uuid.UUID, db: AsyncSession) -> list[dict]:
+    """Return enriched dicts for non-excluded PowerVS records with complete processing."""
+    result = await db.execute(
         select(ServerRecord).where(
-            ServerRecord.project_id == project_uuid,
+            ServerRecord.project_id == project_id,
             ServerRecord.processing_status == "complete",
-            ServerRecord.is_excluded.is_(False),
-            ServerRecord.server_type == "powervs",
             ServerRecord.normalized_data.is_not(None),
+            ServerRecord.server_type == "powervs",
+            ServerRecord.is_excluded.is_(False),
         )
     )
-    db_records = rec_result.scalars().all()
+    records = result.scalars().all()
+    return [
+        {
+            "normalized_data": r.normalized_data,
+            "server_type": r.server_type or "powervs",
+            "is_excluded": r.is_excluded,
+        }
+        for r in records
+        if r.normalized_data
+    ]
 
-    if not db_records:
+
+# ---------------------------------------------------------------------------
+# GET /projects/{id}/pricing-template/status
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/projects/{project_id}/pricing-template/status",
+    response_model=PricingTemplateStatus,
+)
+async def get_pricing_template_status(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> PricingTemplateStatus:
+    """Return whether a pricing template has been uploaded for this project."""
+    await _get_project_or_404(db, project_id)
+    result = await db.execute(
+        select(PricingTemplate).where(PricingTemplate.project_id == project_id)
+    )
+    tmpl = result.scalar_one_or_none()
+    if tmpl is None:
+        return PricingTemplateStatus(has_template=False, filename=None, updated_at=None)
+    return PricingTemplateStatus(
+        has_template=True,
+        filename=tmpl.filename,
+        updated_at=tmpl.updated_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /projects/{id}/pricing-template  (upload / replace)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/projects/{project_id}/pricing-template",
+    response_model=PricingTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_pricing_template(
+    project_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> PricingTemplateResponse:
+    """Upload (or replace) the IBM Price Estimator template for this project.
+
+    Validates that the file contains the expected sheet name.
+    Stores the raw bytes in the DB — one record per project (upsert).
+    """
+    await _get_project_or_404(db, project_id)
+
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No completed PowerVS records found for this project. Process the upload first.",
+            detail="File must be a .xlsx workbook.",
         )
 
-    # Build flat server dicts for the filler service
-    servers: list[dict] = []
-    for r in db_records:
-        nd = r.normalized_data or {}
-        vinfo = nd.get("vinfo") or {}
+    file_bytes = await file.read()
 
-        # Resolve cores — entitled processors stored as float (e.g. 4.5)
-        cpus_raw = (
-            vinfo.get("cpus")
-            or vinfo.get("num_cpus")
-            or vinfo.get("cpu_count")
-            or 0
-        )
-        try:
-            cores = float(cpus_raw)
-        except (TypeError, ValueError):
-            cores = 0.0
-
-        mem_mb_raw = vinfo.get("memory_mb") or vinfo.get("memory") or 0
-        try:
-            mem_mb = float(mem_mb_raw)
-        except (TypeError, ValueError):
-            mem_mb = 0.0
-        memory_gb = max(1.0, round(mem_mb / 1024, 0)) if mem_mb > 0 else 4.0
-
-        disk_mb_raw = (
-            vinfo.get("total_disk_mb")
-            or vinfo.get("provisioned_mb")
-            or 0
-        )
-        try:
-            disk_mb = float(disk_mb_raw)
-        except (TypeError, ValueError):
-            disk_mb = 0.0
-        storage_gb = max(1, round(disk_mb / 1024)) if disk_mb > 0 else 100
-
-        servers.append({
-            "server_name":    vinfo.get("vm_name") or str(r.id),
-            "machine_type":   vinfo.get("machine_type") or "S1022",
-            "processor_type": vinfo.get("processor_type") or "S",
-            "cores":          cores,
-            "memory_gb":      memory_gb,
-            "os_config":      vinfo.get("os_config") or vinfo.get("os_family"),
-            "storage_gb":     storage_gb,
-        })
-
-    # Read template bytes (no caching — always fresh)
-    template_bytes = await template.read()
-    if not template_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded template file is empty")
-
-    # Fill the template
+    # Quick structural validation — check for expected sheet
     try:
-        filled_bytes = fill_powervs_price_estimator(
-            template_bytes=template_bytes,
-            servers=servers,
-            datacenter=datacenter.upper(),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=False, keep_vba=False)
+        if _EXPECTED_SHEET not in wb.sheetnames:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Workbook does not contain the sheet '{_EXPECTED_SHEET}'. "
+                    "Please upload a valid IBM Power Virtual Server Price Estimator workbook."
+                ),
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fill template: {exc}",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not read workbook: {exc}",
+        ) from exc
+
+    # Upsert — replace existing template for this project
+    result = await db.execute(
+        select(PricingTemplate).where(PricingTemplate.project_id == project_id)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing is not None:
+        existing.filename  = file.filename
+        existing.file_data = file_bytes
+        existing.updated_at = datetime.utcnow()
+        tmpl = existing
+    else:
+        tmpl = PricingTemplate(
+            project_id=project_id,
+            filename=file.filename,
+            file_data=file_bytes,
+        )
+        db.add(tmpl)
+
+    await db.commit()
+    await db.refresh(tmpl)
+
+    logger.info(
+        "Pricing template '%s' uploaded for project %s (%d bytes)",
+        file.filename, project_id, len(file_bytes),
+    )
+    return PricingTemplateResponse.model_validate(tmpl)
+
+
+# ---------------------------------------------------------------------------
+# POST /projects/{id}/export/pricing-estimator  (populate + download)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/projects/{project_id}/export/pricing-estimator",
+    status_code=status.HTTP_200_OK,
+)
+async def generate_pricing_estimator_export(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Populate the uploaded IBM Price Estimator with PowerVS server data.
+
+    Opens the stored template, writes the yellow input cells only (LPAR name,
+    data center, system, processor type, cores, memory, OS, storage), and
+    returns the populated workbook as a streaming download.  All formulas and
+    other sheets are preserved intact — open the file in Excel to see pricing.
+    """
+    project = await _get_project_or_404(db, project_id)
+
+    # Fetch template
+    result = await db.execute(
+        select(PricingTemplate).where(PricingTemplate.project_id == project_id)
+    )
+    tmpl = result.scalar_one_or_none()
+    if tmpl is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No pricing template uploaded for this project. "
+                   "Upload the IBM Price Estimator workbook first.",
         )
 
-    # Build filename
-    project_slug = (project.name or "PowerVS").replace(" ", "_")[:40]
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"PowerVS_PriceEstimator_{project_slug}_{ts}.xlsx"
+    # Fetch PowerVS records
+    powervs_records = await _fetch_powervs_records(project_id, db)
+    if not powervs_records:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No PowerVS records found for this project.",
+        )
 
-    import io
+    pvs_datacenter = project.pvs_datacenter or "dal10"
+
+    try:
+        filled_bytes, written, skipped = pricing_template_filler.fill_pricing_template(
+            tmpl.file_data,
+            powervs_records,
+            pvs_datacenter=pvs_datacenter,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    safe_name = project.name.replace(" ", "_")
+    filename  = f"PowerVS_PriceEstimator_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+    logger.info(
+        "Pricing estimator export for project %s: %d servers written, %d skipped (>%d limit), dc=%s",
+        project_id, written, skipped, pricing_template_filler._ROWS_PER_SHEET, pvs_datacenter,
+    )
+
+    if skipped > 0:
+        logger.warning(
+            "Project %s has %d PowerVS servers exceeding the %d-row sheet limit — "
+            "%d servers were not written to the template.",
+            project_id, len(powervs_records),
+            pricing_template_filler._ROWS_PER_SHEET, skipped,
+        )
+
     return StreamingResponse(
         io.BytesIO(filled_bytes),
         media_type=_XLSX_MEDIA_TYPE,

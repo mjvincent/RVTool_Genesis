@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
 from routers.health import router as health_router
 from routers import backups, exports, folders, pricing_template, processing, projects, settings as settings_router, uploads
+# schemas/pricing_template imported via the router; no top-level import needed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -94,4 +95,4 @@ app.include_router(processing.router, prefix="/api")
 app.include_router(exports.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(backups.router, prefix="/api")
-app.include_router(pricing_template.router, prefix="/api/pricing-template")
+app.include_router(pricing_template.router, prefix="/api")

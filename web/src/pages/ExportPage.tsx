@@ -104,11 +104,12 @@ export default function ExportPage() {
   const [pvsFullDone, setPvsFullDone]           = useState(false);
   const [pvsAsmDone, setPvsAsmDone]             = useState(false);
 
-  // Price Estimator filler — reset state on every use (no caching)
-  const [estimatorFile, setEstimatorFile]       = useState<File | null>(null);
-  const [estimatorLoading, setEstimatorLoading] = useState(false);
-  const [estimatorError, setEstimatorError]     = useState('');
-  const [estimatorDone, setEstimatorDone]       = useState(false);
+  // Pricing template state (upload-then-populate model)
+  const [templateStatus, setTemplateStatus] = useState<{ has_template: boolean; filename: string | null; updated_at: string | null } | null>(null);
+  const [templateUploading, setTemplateUploading] = useState(false);
+  const [populateLoading, setPopulateLoading]     = useState(false);
+  const [populateDone, setPopulateDone]           = useState(false);
+  const [truncatedCount, setTruncatedCount]       = useState(0);
 
   const [error, setError] = useState('');
 
@@ -122,6 +123,7 @@ export default function ExportPage() {
     }).catch(() => {});
     api.processing.getStatus(projectId).then(setStatus).catch(() => {});
     api.exports.getPowerVSCount(projectId).then(r => setPowervsCount(r.powervs_count)).catch(() => {});
+    api.pricingTemplate.getStatus(projectId).then(setTemplateStatus).catch(() => {});
   }, [projectId]);
 
   async function handleSaveRegion() {
@@ -215,35 +217,33 @@ export default function ExportPage() {
     finally { setPvsFullLoading(false); }
   }
 
-  async function handleFillEstimator() {
-    if (!estimatorFile) return;
-    setEstimatorLoading(true);
-    setEstimatorError('');
-    setEstimatorDone(false);
+  async function handleTemplateUpload(file: File) {
+    setTemplateUploading(true); setError('');
     try {
-      const datacenter = (project?.pvs_datacenter ?? 'dal10').toUpperCase();
-      const resp = await api.pricingTemplate.fill(projectId, estimatorFile, datacenter);
+      await api.pricingTemplate.upload(projectId, file);
+      const status = await api.pricingTemplate.getStatus(projectId);
+      setTemplateStatus(status);
+      setPopulateDone(false); // reset so user can download fresh
+    } catch (e: any) { setError(e?.message || 'Failed to upload template.'); }
+    finally { setTemplateUploading(false); }
+  }
+
+  async function handlePopulate() {
+    setPopulateLoading(true); setError('');
+    try {
+      const resp = await api.pricingTemplate.populate(projectId);
       if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}));
-        throw new Error((body as any).detail || `HTTP ${resp.status}`);
+        const err = await resp.json().catch(() => ({ detail: 'Failed to populate estimator.' }));
+        throw new Error(err.detail || 'Failed to populate estimator.');
       }
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const disposition = resp.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename="?([^"]+)"?/);
-      a.href = url;
-      a.download = match ? match[1] : `PowerVS_PriceEstimator_${projectId}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setEstimatorDone(true);
-      // Reset file input so user is prompted fresh next time
-      setEstimatorFile(null);
-    } catch (e: any) {
-      setEstimatorError(e?.message || 'Failed to fill estimator template.');
-    } finally {
-      setEstimatorLoading(false);
-    }
+      await triggerDownload(resp, `PowerVS_PriceEstimator_${projectId}.xlsx`);
+      setPopulateDone(true);
+      // Check if the response header hints at truncation
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const warnMatch = cd.match(/truncated=(\d+)/);
+      if (warnMatch) setTruncatedCount(parseInt(warnMatch[1], 10));
+    } catch (e: any) { setError(e?.message || 'Failed to generate populated estimator.'); }
+    finally { setPopulateLoading(false); }
   }
 
   async function handlePVSAssumptions() {
@@ -562,73 +562,74 @@ export default function ExportPage() {
               </div>
             </div>
 
-            {/* ── PowerVS Price Estimator filler (bottom of PowerVS section) ─── */}
-            <div style={{
-              borderTop: '1px solid #d0d0d0', paddingTop: '1.5rem', marginTop: '0.5rem',
-              background: '#f9f4ff', border: '1px solid #d4bbf7', borderRadius: 6,
-              padding: '1.25rem 1.5rem',
-            }}>
+            {/* ── IBM Price Estimator section ─────────────────────────────── */}
+            <div style={{ borderTop: '1px solid #d8b4fe', paddingTop: '1.25rem', marginTop: '0.5rem', marginBottom: '1.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <Lightning size={18} style={{ color: '#6929c4', flexShrink: 0 }} />
-                <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#6929c4', margin: 0 }}>
-                  IBM PowerVS Price Estimator
-                </h3>
+                <DocumentDownload size={18} style={{ color: '#6929c4' }} />
+                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#6929c4' }}>IBM Price Estimator (Excel)</span>
+                <InfoTooltip text="Upload the IBM Power Virtual Server Price Estimator spreadsheet once per project. The app writes your server data into the yellow input cells only, leaving all pricing formulas intact. Open the downloaded file in Excel to see live pricing." />
               </div>
-              <p style={{ fontSize: '0.8125rem', color: '#3d3d3d', marginBottom: '1rem', lineHeight: 1.5 }}>
-                Upload the latest IBM PowerVS Price Estimator template (.xlsx) to auto-fill it with
-                this project's <strong>{powervsCount} LPAR{powervsCount !== 1 ? 's' : ''}</strong>.
-                You will be prompted to upload the template each time — no file is cached between uses.
+              <p style={{ fontSize: '0.8125rem', color: '#525252', margin: '0 0 0.75rem 0' }}>
+                Upload the IBM Price Estimator .xlsx once, then download a pre-filled copy with your PowerVS servers populated. Open in Excel — pricing recalculates automatically.
               </p>
 
-              {estimatorError && (
-                <div style={{
-                  background: '#fff1f1', border: '1px solid #da1e28', borderRadius: 4,
-                  padding: '0.5rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.8125rem', color: '#da1e28',
-                }}>
-                  {estimatorError}
-                </div>
-              )}
+              {/* Template status */}
+              <div style={{ fontSize: '0.8125rem', color: templateStatus?.has_template ? '#198038' : '#6f6f6f', marginBottom: '0.75rem' }}>
+                {templateStatus?.has_template
+                  ? <>✓ Template on file: <strong>{templateStatus.filename}</strong>{templateStatus.updated_at ? ` — uploaded ${new Date(templateStatus.updated_at).toLocaleDateString()}` : ''}</>
+                  : 'No template uploaded yet.'}
+              </div>
 
+              {/* Upload + Populate row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <label
-                  htmlFor="estimator-file-input"
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                    padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500,
-                    background: '#fff', border: '1px solid #8a3ffc', borderRadius: 4,
-                    color: '#6929c4', cursor: 'pointer', whiteSpace: 'nowrap',
-                  }}
-                >
-                  📂 {estimatorFile ? estimatorFile.name : 'Choose Estimator Template…'}
+                {/* Upload button — hidden file input + visible trigger */}
+                <label style={{ cursor: templateUploading ? 'wait' : 'pointer' }}>
+                  <input
+                    type="file"
+                    accept=".xlsx,.XLSX"
+                    style={{ display: 'none' }}
+                    disabled={templateUploading}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) handleTemplateUpload(f);
+                      e.target.value = '';   // allow re-upload same file
+                    }}
+                  />
+                  <span
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.4rem 1rem', border: '1px solid #6929c4', borderRadius: 2,
+                      fontSize: '0.875rem', color: '#6929c4',
+                      background: templateUploading ? '#f4f4f4' : '#fff',
+                      cursor: 'inherit',
+                    }}
+                  >
+                    {templateUploading ? 'Uploading…' : templateStatus?.has_template ? 'Replace template' : 'Upload IBM Price Estimator'}
+                  </span>
                 </label>
-                <input
-                  id="estimator-file-input"
-                  type="file"
-                  accept=".xlsx,.XLSX"
-                  style={{ display: 'none' }}
-                  // Reset key forces a fresh input element so the same file can be re-selected
-                  key={estimatorDone ? 'reset' : 'active'}
-                  onChange={e => {
-                    const f = e.target.files?.[0] ?? null;
-                    setEstimatorFile(f);
-                    setEstimatorError('');
-                    setEstimatorDone(false);
-                  }}
-                />
-                <Button
-                  renderIcon={estimatorDone ? Checkmark : DocumentDownload}
-                  kind={estimatorDone ? 'ghost' : 'primary'}
-                  size="md"
-                  disabled={!estimatorFile || estimatorLoading}
-                  onClick={handleFillEstimator}
-                >
-                  {estimatorLoading ? 'Filling…' : estimatorDone ? 'Downloaded ✓' : 'Fill & Download'}
-                </Button>
-                {estimatorLoading && <InlineLoading description="Filling template…" />}
+
+                {/* Populate & Download button */}
+                {populateLoading ? (
+                  <InlineLoading description="Populating…" />
+                ) : (
+                  <Button
+                    renderIcon={populateDone ? Checkmark : DocumentDownload}
+                    kind={populateDone ? 'ghost' : 'primary'}
+                    disabled={!templateStatus?.has_template || powervsCount === 0}
+                    onClick={handlePopulate}
+                    size="md"
+                  >
+                    {populateDone ? 'Downloaded ✓' : 'Populate & Download'}
+                  </Button>
+                )}
               </div>
-              <p style={{ fontSize: '0.75rem', color: '#6f6f6f', marginTop: '0.75rem', marginBottom: 0 }}>
-                The filled file will be named <em>PowerVS_PriceEstimator_{'{ProjectName}'}_{'{timestamp}'}.xlsx</em>
-              </p>
+
+              {/* Truncation warning */}
+              {truncatedCount > 0 && (
+                <p style={{ fontSize: '0.8125rem', color: '#da1e28', marginTop: '0.5rem' }}>
+                  ⚠ {truncatedCount} server{truncatedCount !== 1 ? 's' : ''} exceeded the 300-row sheet limit and were not written to the file. Open the downloaded workbook to see the warning row.
+                </p>
+              )}
             </div>
           </>
         )}

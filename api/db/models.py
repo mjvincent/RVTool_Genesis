@@ -81,6 +81,10 @@ class Project(Base):
     assumptions_exports: Mapped[list["AssumptionsExport"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    # One IBM Price Estimator template per project (optional, upserted on upload)
+    pricing_template: Mapped["PricingTemplate | None"] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Upload(Base):
@@ -244,3 +248,28 @@ class LLMSettings(Base):
     recommendation_snoozed_until: Mapped[datetime | None] = mapped_column(nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
+
+
+class PricingTemplate(Base):
+    """IBM Price Estimator workbook stored per project.
+
+    Stores the raw bytes of the uploaded IBM Power Virtual Server Price Estimator
+    Excel file. One per project (upsert pattern). The filler service writes only
+    the yellow input cells into this template, preserving all formulas.
+    """
+    __tablename__ = "pricing_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False, unique=True,   # one per project
+    )
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    file_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
+
+    # relationships
+    project: Mapped["Project"] = relationship(back_populates="pricing_template")
