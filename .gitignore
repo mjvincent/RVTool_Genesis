@@ -25,3 +25,6 @@ Thumbs.db
 
 # Bob AI tool temp files — analysis dumps, never source code
 .bob/
+
+# Samples folder — may contain customer data, never commit
+Samples/
