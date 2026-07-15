@@ -28,3 +28,6 @@ Thumbs.db
 
 # Samples folder — may contain customer data, never commit
 Samples/
+
+# Prompt history docs — local reference only
+*.docx

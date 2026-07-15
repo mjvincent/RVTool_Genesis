@@ -56,7 +56,7 @@ cd RVTool_Genesis
 
 The setup script handles everything:
 - Checks Docker and Ollama are running
-- Pulls the `gemma4:e4b` model if not already available
+- Pulls the `phi4-mini` model if not already available
 - Creates the `.env` configuration file automatically
 - Builds and starts all containers
 - Opens the app in your browser when ready
@@ -136,22 +136,27 @@ OrbStack / Docker Compose
 │   ├── /api/restore               — restore from .json or .zip
 │   │
 │   └── services/
-│       ├── spreadsheet_parser   — pandas: handles any freeform .xlsx/.csv
-│       ├── ai_normalizer        — LLM dispatcher + cloud/Ollama adapters
-│       ├── crypto               — AES-256 Fernet encryption for API keys
-│       ├── network_inference    — default subnet/gateway/NIC logic
-│       ├── rvtools_generator    — openpyxl: generates 22-sheet RVTools file
-│       ├── assumptions_generator — openpyxl: generates Assumptions Report
-│       └── validator            — structural validation for generated files
+│       ├── spreadsheet_parser        — pandas: handles any freeform .xlsx/.csv
+│       ├── ai_normalizer             — LLM dispatcher + cloud/Ollama adapters
+│       ├── crypto                    — AES-256 Fernet encryption for API keys
+│       ├── network_inference         — default subnet/gateway/NIC logic
+│       ├── rvtools_generator         — openpyxl: generates 22-sheet RVTools file
+│       ├── assumptions_generator     — openpyxl: generates Assumptions Report
+│       ├── vpc_calculator_generator  — openpyxl: generates 3-sheet VPC Cloud Solution Export
+│       ├── powervs_calculator_generator — generates IBM PowerVS Calculator workbook
+│       ├── model_catalog             — curated LLM model catalog + upgrade recommendations
+│       └── validator                 — structural validation for generated files
 │
 └── db :5433  (PostgreSQL 16)
-    ├── projects
+    ├── projects          (vpc_region, vpc_datacenter, pvs_region, pvs_datacenter)
+    ├── folders           (hierarchical project organisation)
     ├── uploads
-    ├── server_records  (JSONB: raw_data, normalized_data)
+    ├── server_records    (JSONB: raw_data, normalized_data, server_type, is_excluded)
     ├── assumptions
     ├── rvtools_exports
     ├── assumptions_exports
-    └── llm_settings         (single-row: active provider + encrypted keys)
+    └── llm_settings      (single-row: active provider + encrypted keys,
+                           previous_model, recommendation_snoozed_until)
 │
 [host Mac — NOT in Docker, only when using Ollama provider]
 └── Ollama :11434
