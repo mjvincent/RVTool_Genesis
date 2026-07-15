@@ -128,26 +128,51 @@ class TestFlexMemory:
         assert flag == "no_matching_profile"
 
     def test_max_flex_memory(self):
+        # mxf has no 128-vCPU size — largest is 96. Should flag no_matching_profile.
         cat, name, flag = _select_vpc_profile(128, 1024)
-        assert cat == "Flex-Memory"
-        assert name == "mxf-128x1024"
-        assert flag == ""
+        assert flag == "no_matching_profile"
 
 
 # ---------------------------------------------------------------------------
-# CPU snapping
+# CPU snapping — per-family catalog enforcement
 # ---------------------------------------------------------------------------
 
 class TestCPUSnapping:
-    def test_cpu_snaps_up_to_next_standard(self):
-        # 10 CPUs → snaps to 12; 10×4=40 GB needed, 12×4=48 → bxf-12x48
+    def test_cpu_10_bxf_no_12_snaps_to_16(self):
+        # 10 CPUs, 40 GB RAM. bxf has no 12-vCPU → snaps to 16 → bxf-16x64
+        # bxf-12x48 is NOT a real IBM VPC profile and must never be produced.
         cat, name, flag = _select_vpc_profile(10, 40)
         assert cat == "Flex-Balanced"
-        assert name == "bxf-12x48"
+        assert name == "bxf-16x64"
+        assert flag == ""
+
+    def test_cpu_12_bxf_no_12_snaps_to_16(self):
+        # phxldb101 case: 12 CPUs requested → bxf has no 12-vCPU → snap to 16
+        cat, name, flag = _select_vpc_profile(12, 48)
+        assert name == "bxf-16x64"    # NOT bxf-12x48
+        assert flag == ""
+
+    def test_cpu_20_bxf_no_20_snaps_to_32(self):
+        # bxf has no 20-vCPU size → snaps to 32 → bxf-32x128
+        cat, name, flag = _select_vpc_profile(20, 80)
+        assert name == "bxf-32x128"   # NOT bxf-20x80
+        assert flag == ""
+
+    def test_cpu_24_bxf_no_24_snaps_to_32(self):
+        # bxf has no 24-vCPU size → snaps to 32 → bxf-32x128
+        cat, name, flag = _select_vpc_profile(24, 96)
+        assert name == "bxf-32x128"   # NOT bxf-24x96
+        assert flag == ""
+
+    def test_cpu_24_cxf_has_24(self):
+        # cxf DOES have a 24-vCPU size → cxf-24x48 is a real catalog profile
+        cat, name, flag = _select_vpc_profile(24, 48)
+        assert cat == "Flex-Compute"
+        assert name == "cxf-24x48"
         assert flag == ""
 
     def test_cpu_1_snaps_to_2(self):
-        # 1 CPU → snaps to 2 (minimum Flex size)
+        # 1 CPU → snaps to 2 (minimum Flex size across all families)
         cat, name, flag = _select_vpc_profile(1, 4)
         assert cat == "Flex-Compute"
         assert name == "cxf-2x4"
@@ -165,8 +190,14 @@ class TestCPUSnapping:
 # ---------------------------------------------------------------------------
 
 class TestNoMatchingProfile:
-    def test_cpu_exceeds_128(self):
-        _, _, flag = _select_vpc_profile(130, 1040)
+    def test_cpu_exceeds_96_mxf_max(self):
+        # mxf largest valid CPU is 96. 128 vCPUs exceeds it → no_matching_profile.
+        _, _, flag = _select_vpc_profile(128, 1024)
+        assert flag == "no_matching_profile"
+
+    def test_cpu_exceeds_96_bxf_max(self):
+        # bxf largest valid CPU is also 96.
+        _, _, flag = _select_vpc_profile(100, 400)
         assert flag == "no_matching_profile"
 
     def test_ratio_exceeds_8(self):
@@ -174,14 +205,16 @@ class TestNoMatchingProfile:
         _, _, flag = _select_vpc_profile(8, 1000)
         assert flag == "no_matching_profile"
 
-    def test_mxf_max_just_fits(self):
-        # 128 vCPU / 1024 GB = ratio exactly 8 → fits in Flex-Memory
-        _, _, flag = _select_vpc_profile(128, 1024)
+    def test_mxf_max_cpu_96_just_fits(self):
+        # mxf largest is 96-vCPU × 8 GB = 768 GB → exactly fits
+        cat, name, flag = _select_vpc_profile(96, 768)
+        assert cat == "Flex-Memory"
+        assert name == "mxf-96x768"
         assert flag == ""
 
-    def test_mxf_max_just_over(self):
-        # 128 vCPU / 1025 GB → ratio > 8 → no_matching_profile
-        _, _, flag = _select_vpc_profile(128, 1025)
+    def test_mxf_max_cpu_96_just_over(self):
+        # 96 vCPU / 769 GB → 769 > 768 → no Flex family can cover it
+        _, _, flag = _select_vpc_profile(96, 769)
         assert flag == "no_matching_profile"
 
 
