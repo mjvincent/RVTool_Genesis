@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import Project, Upload
+from db.models import PricingTemplate, Project, Upload
 from schemas.project import ProjectCreate, ProjectListResponse, ProjectResponse, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,53 @@ async def delete_project(
     project = await _get_project_or_404(db, project_id)
     await db.delete(project)
     await db.commit()
+
+
+@router.post("/projects/{project_id}/duplicate", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+async def duplicate_project(
+    project_id: uuid.UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+) -> ProjectResponse:
+    """Shallow-copy a project: metadata, region settings, and the stored pricing template.
+
+    No uploads or server records are copied — the user can re-upload if needed.
+    The new project name is taken from the request body (field: ``name``).
+    """
+    from pydantic import BaseModel
+
+    source = await _get_project_or_404(db, project_id)
+    new_name: str = (body.get("name") or f"{source.name} (copy)").strip()
+
+    new_project = Project(
+        name=new_name,
+        description=source.description,
+        folder_id=source.folder_id,
+        vpc_region=source.vpc_region,
+        vpc_datacenter=source.vpc_datacenter,
+        pvs_region=source.pvs_region,
+        pvs_datacenter=source.pvs_datacenter,
+    )
+    db.add(new_project)
+    await db.flush()  # populate new_project.id before copying the template
+
+    # Copy the stored IBM Price Estimator template if one exists
+    tmpl_result = await db.execute(
+        select(PricingTemplate).where(PricingTemplate.project_id == project_id)
+    )
+    source_tmpl = tmpl_result.scalar_one_or_none()
+    if source_tmpl is not None:
+        new_tmpl = PricingTemplate(
+            project_id=new_project.id,
+            filename=source_tmpl.filename,
+            file_data=source_tmpl.file_data,
+        )
+        db.add(new_tmpl)
+
+    await db.commit()
+    await db.refresh(new_project)
+    logger.info("Duplicated project %s → %s (name=%r)", project_id, new_project.id, new_name)
+    return ProjectResponse.model_validate(new_project)
 
 
 # ---------------------------------------------------------------------------

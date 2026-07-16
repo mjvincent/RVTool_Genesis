@@ -109,7 +109,7 @@ export default function ExportPage() {
   const [templateUploading, setTemplateUploading] = useState(false);
   const [populateLoading, setPopulateLoading]     = useState(false);
   const [populateDone, setPopulateDone]           = useState(false);
-  const [truncatedCount, setTruncatedCount]       = useState(0);
+  const [populateSummary, setPopulateSummary]     = useState<{ written: number; skipped: number; machineCounts: Record<string, number> } | null>(null);
 
   const [error, setError] = useState('');
 
@@ -229,19 +229,21 @@ export default function ExportPage() {
   }
 
   async function handlePopulate() {
-    setPopulateLoading(true); setError('');
+    setPopulateLoading(true); setError(''); setPopulateSummary(null);
     try {
       const resp = await api.pricingTemplate.populate(projectId);
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: 'Failed to populate estimator.' }));
         throw new Error(err.detail || 'Failed to populate estimator.');
       }
+      // Read summary headers BEFORE consuming body (triggerDownload reads the blob)
+      const written = parseInt(resp.headers.get('X-Written-Count') || '0', 10);
+      const skipped = parseInt(resp.headers.get('X-Skipped-Count') || '0', 10);
+      const machineRaw = resp.headers.get('X-Machine-Counts') || '{}';
+      const machineCounts: Record<string, number> = JSON.parse(machineRaw);
       await triggerDownload(resp, `PowerVS_PriceEstimator_${projectId}.xlsx`);
       setPopulateDone(true);
-      // Check if the response header hints at truncation
-      const cd = resp.headers.get('Content-Disposition') || '';
-      const warnMatch = cd.match(/truncated=(\d+)/);
-      if (warnMatch) setTruncatedCount(parseInt(warnMatch[1], 10));
+      setPopulateSummary({ written, skipped, machineCounts });
     } catch (e: any) { setError(e?.message || 'Failed to generate populated estimator.'); }
     finally { setPopulateLoading(false); }
   }
@@ -624,11 +626,35 @@ export default function ExportPage() {
                 )}
               </div>
 
-              {/* Truncation warning */}
-              {truncatedCount > 0 && (
-                <p style={{ fontSize: '0.8125rem', color: '#da1e28', marginTop: '0.5rem' }}>
-                  ⚠ {truncatedCount} server{truncatedCount !== 1 ? 's' : ''} exceeded the 300-row sheet limit and were not written to the file. Open the downloaded workbook to see the warning row.
-                </p>
+              {/* Export summary card */}
+              {populateSummary && (
+                <div style={{ marginTop: '1rem', border: '1px solid #e5e7eb', borderRadius: 4, overflow: 'hidden', fontSize: '0.8125rem' }}>
+                  <div style={{ background: '#f0fdf4', borderBottom: '1px solid #e5e7eb', padding: '0.5rem 0.75rem', fontWeight: 600, color: '#198038' }}>
+                    ✓ {populateSummary.written} LPAR{populateSummary.written !== 1 ? 's' : ''} written to the Price Estimator
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#f7f8fa' }}>
+                        <th style={{ textAlign: 'left', padding: '0.4rem 0.75rem', fontWeight: 600, color: '#525252', borderBottom: '1px solid #e5e7eb' }}>System</th>
+                        <th style={{ textAlign: 'right', padding: '0.4rem 0.75rem', fontWeight: 600, color: '#525252', borderBottom: '1px solid #e5e7eb' }}>LPARs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(populateSummary.machineCounts).sort().map(([machine, count]) => (
+                        <tr key={machine} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{ padding: '0.4rem 0.75rem', color: '#1f2328' }}>{machine}</td>
+                          <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#1f2328' }}>{count}</td>
+                        </tr>
+                      ))}
+                      {populateSummary.skipped > 0 && (
+                        <tr style={{ background: '#fff8f1' }}>
+                          <td style={{ padding: '0.4rem 0.75rem', color: '#da1e28' }}>⚠ Skipped (over 300-row limit)</td>
+                          <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#da1e28' }}>{populateSummary.skipped}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </>

@@ -524,11 +524,21 @@ def _fill_zip(
     return out_buf.read()
 
 
+def _count_by_machine(batch: list[dict]) -> dict[str, int]:
+    """Return {machine_type: count} for a batch of active records."""
+    counts: dict[str, int] = {}
+    for i, rec in enumerate(batch):
+        fields = _extract_server_fields(rec, i)
+        machine = fields["machine"]
+        counts[machine] = counts.get(machine, 0) + 1
+    return counts
+
+
 def fill_pricing_template(
     template_bytes: bytes,
     records: list[dict],
     pvs_datacenter: str = "dal10",
-) -> tuple[bytes, int, int]:
+) -> tuple[bytes, int, int, dict[str, int]]:
     """Populate IBM Price Estimator yellow input cells from PowerVS server records.
 
     Single-workbook variant — stops at _ROWS_PER_SHEET and adds a warning row.
@@ -540,8 +550,9 @@ def fill_pricing_template(
         pvs_datacenter: Project PowerVS datacenter (e.g. "dal10"). Uppercased for the sheet.
 
     Returns:
-        (populated_bytes, records_written, records_skipped)
+        (populated_bytes, records_written, records_skipped, machine_counts)
         records_skipped > 0 when the server list exceeds _ROWS_PER_SHEET.
+        machine_counts is a dict like {"S1022": 12, "E1050": 4}.
 
     Raises:
         ValueError: If the workbook does not contain the expected sheet name.
@@ -563,7 +574,8 @@ def fill_pricing_template(
         )
 
     populated = _fill_zip(template_bytes, batch, pvs_datacenter)
-    return populated, len(batch), records_skipped
+    machine_counts = _count_by_machine(batch)
+    return populated, len(batch), records_skipped, machine_counts
 
 
 def fill_pricing_template_batches(

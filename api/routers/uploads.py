@@ -621,3 +621,100 @@ async def bulk_nxf_replace(
         updated_count=updated_count,
         target_profile=body.target_profile,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bulk exclude by filter endpoint
+# ---------------------------------------------------------------------------
+
+class BulkExcludeBody(BaseModel):
+    filter_type: str    # "name" | "os"
+    filter_value: str
+    reason: str | None = None
+
+
+class BulkExcludeResponse(BaseModel):
+    updated_count: int
+    filter_type: str
+    filter_value: str
+
+
+@router.post(
+    "/projects/{project_id}/bulk-exclude",
+    response_model=BulkExcludeResponse,
+)
+async def bulk_exclude(
+    project_id: uuid.UUID,
+    body: BulkExcludeBody,
+    db: AsyncSession = Depends(get_db),
+) -> BulkExcludeResponse:
+    """Exclude all non-excluded, normalized records matching a name substring or OS value.
+
+    filter_type="name"  → case-insensitive substring match on vinfo.vm_name
+    filter_type="os"    → exact match on vinfo.os_config
+    """
+    import uuid as _uuid
+    from datetime import datetime
+
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.is_excluded == False,  # noqa: E712
+        )
+    )
+    records = result.scalars().all()
+
+    filter_value = body.filter_value.strip()
+    updated_count = 0
+
+    for record in records:
+        if not record.normalized_data:
+            continue
+        vinfo = record.normalized_data.get("vinfo") or {}
+
+        if body.filter_type == "name":
+            vm_name = (vinfo.get("vm_name") or "").lower()
+            if filter_value.lower() not in vm_name:
+                continue
+        elif body.filter_type == "os":
+            os_config = vinfo.get("os_config") or ""
+            if os_config != filter_value:
+                continue
+        else:
+            continue
+
+        record.is_excluded = True
+        if body.reason:
+            record.exclusion_reason = body.reason
+
+        assumption = Assumption(
+            id=_uuid.uuid4(),
+            server_record_id=record.id,
+            project_id=project_id,
+            field_name="is_excluded",
+            assumed_value="true",
+            original_value="false",
+            reasoning=(
+                f"User-initiated bulk exclusion by {body.filter_type} filter "
+                f"(value='{filter_value}')"
+                + (f": {body.reason}" if body.reason else ".")
+            ),
+            confidence="high",
+            created_at=datetime.utcnow(),
+        )
+        db.add(assumption)
+        updated_count += 1
+
+    await db.commit()
+    logger.info(
+        "Bulk exclude: project %s — filter_type=%s value=%r (%d records excluded)",
+        project_id, body.filter_type, filter_value, updated_count,
+    )
+    return BulkExcludeResponse(
+        updated_count=updated_count,
+        filter_type=body.filter_type,
+        filter_value=filter_value,
+    )

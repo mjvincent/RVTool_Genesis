@@ -35,6 +35,7 @@ export default function ProjectsPage() {
   const [projects, setProjects]             = useState<Project[]>([]);
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState('');
+  const [statusMap, setStatusMap]           = useState<Record<string, { complete: number; total: number; is_complete: boolean }>>({});
 
   // Delete project
   const [deleteTarget, setDeleteTarget]     = useState<Project | null>(null);
@@ -56,6 +57,11 @@ export default function ProjectsPage() {
   // Move project modal
   const [moveTarget, setMoveTarget]         = useState<Project | null>(null);
 
+  // Duplicate project
+  const [duplicateTarget, setDuplicateTarget]   = useState<Project | null>(null);
+  const [duplicateName, setDuplicateName]       = useState('');
+  const [duplicateLoading, setDuplicateLoading] = useState(false);
+
   // Backup
   const [backupTarget, setBackupTarget]     = useState<Project | null>(null);
   const [backupAllOpen, setBackupAllOpen]   = useState(false);
@@ -76,6 +82,18 @@ export default function ProjectsPage() {
       ]);
       setFolders(folderRes.folders);
       setProjects(projectRes.projects);
+      // Fetch processing status for all projects in parallel (best-effort)
+      const statuses = await Promise.allSettled(
+        projectRes.projects.map(p => api.processing.getStatus(p.id))
+      );
+      const map: Record<string, { complete: number; total: number; is_complete: boolean }> = {};
+      projectRes.projects.forEach((p, i) => {
+        const r = statuses[i];
+        if (r.status === 'fulfilled' && r.value.total > 0) {
+          map[p.id] = { complete: r.value.complete, total: r.value.total, is_complete: r.value.is_complete };
+        }
+      });
+      setStatusMap(map);
     } catch {
       setError('Could not load data. Make sure the API is running.');
     } finally {
@@ -167,6 +185,23 @@ export default function ProjectsPage() {
     // Remove from current view if it moved away
     if ((updated.folder_id ?? null) !== (currentFolder?.id ?? null)) {
       setProjects(prev => prev.filter(p => p.id !== updated.id));
+    }
+  }
+
+  async function handleDuplicateProject() {
+    if (!duplicateTarget || !duplicateName.trim()) return;
+    setDuplicateLoading(true);
+    try {
+      const created = await api.projects.duplicate(duplicateTarget.id, duplicateName.trim());
+      // Only add to current view if it landed in the same folder
+      if ((created.folder_id ?? null) === (currentFolder?.id ?? null)) {
+        setProjects(prev => [created, ...prev]);
+      }
+      setDuplicateTarget(null);
+    } catch (err) {
+      setError(`Failed to duplicate project: ${(err as any)?.message || 'Please try again.'}`);
+    } finally {
+      setDuplicateLoading(false);
     }
   }
 
@@ -403,7 +438,20 @@ export default function ProjectsPage() {
                 onKeyDown={e => e.key === 'Enter' && navigate(`/projects/${project.id}/upload`)}
               >
                 <div>
-                  <p className="project-item-name">{project.name}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <p className="project-item-name" style={{ margin: 0 }}>{project.name}</p>
+                    {statusMap[project.id] && (
+                      statusMap[project.id].is_complete ? (
+                        <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#198038', background: '#defbe6', border: '1px solid #a7f0ba', borderRadius: 10, padding: '0 0.5rem', lineHeight: '1.6' }}>
+                          ✓ Complete
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#8a4300', background: '#fff8f1', border: '1px solid #ffd191', borderRadius: 10, padding: '0 0.5rem', lineHeight: '1.6' }}>
+                          {statusMap[project.id].complete} / {statusMap[project.id].total} normalized
+                        </span>
+                      )
+                    )}
+                  </div>
                   <p className="project-item-meta">Created {formatDate(project.created_at)}</p>
                 </div>
                 <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
@@ -411,8 +459,9 @@ export default function ProjectsPage() {
                     const p = project;
                     return (
                       <OverflowMenu aria-label="Project actions" size="sm" flipped>
-                        <OverflowMenuItem itemText="Move to folder" onClick={() => setMoveTarget(p)} />
-                        <OverflowMenuItem itemText="Backup project"  onClick={() => setBackupTarget(p)} />
+                        <OverflowMenuItem itemText="Move to folder"      onClick={() => setMoveTarget(p)} />
+                        <OverflowMenuItem itemText="Duplicate project"   onClick={() => { setDuplicateName(`${p.name} (copy)`); setDuplicateTarget(p); }} />
+                        <OverflowMenuItem itemText="Backup project"      onClick={() => setBackupTarget(p)} />
                         <OverflowMenuItem itemText="Delete project" isDelete hasDivider onClick={() => setDeleteTarget(p)} />
                       </OverflowMenu>
                     );
@@ -489,6 +538,29 @@ export default function ProjectsPage() {
       {backupAllOpen && (
         <BackupModal mode="all" onClose={() => setBackupAllOpen(false)} />
       )}
+
+      {/* Duplicate project */}
+      <Modal
+        open={!!duplicateTarget}
+        modalHeading={`Duplicate "${duplicateTarget?.name}"`}
+        primaryButtonText={duplicateLoading ? 'Duplicating…' : 'Duplicate'}
+        secondaryButtonText="Cancel"
+        primaryButtonDisabled={duplicateLoading || !duplicateName.trim()}
+        onRequestSubmit={handleDuplicateProject}
+        onRequestClose={() => setDuplicateTarget(null)}
+      >
+        <p style={{ color: '#525252', lineHeight: 1.6, marginBottom: '1rem' }}>
+          Creates a copy with the same region settings and stored IBM Price Estimator template.
+          Server records are not copied — upload a new inventory file to the duplicate project.
+        </p>
+        <TextInput
+          id="duplicate-project-name"
+          labelText="New project name"
+          value={duplicateName}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDuplicateName(e.target.value)}
+          autoFocus
+        />
+      </Modal>
 
       {/* Delete project confirmation */}
       <Modal

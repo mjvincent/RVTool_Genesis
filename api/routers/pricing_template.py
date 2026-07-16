@@ -204,7 +204,7 @@ async def generate_pricing_estimator_export(
     pvs_datacenter = project.pvs_datacenter or "dal10"
 
     try:
-        filled_bytes, written, skipped = pricing_template_filler.fill_pricing_template(
+        filled_bytes, written, skipped, machine_counts = pricing_template_filler.fill_pricing_template(
             tmpl.file_data,
             powervs_records,
             pvs_datacenter=pvs_datacenter,
@@ -219,8 +219,8 @@ async def generate_pricing_estimator_export(
     filename  = f"PowerVS_PriceEstimator_{safe_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     logger.info(
-        "Pricing estimator export for project %s: %d servers written, %d skipped (>%d limit), dc=%s",
-        project_id, written, skipped, pricing_template_filler._ROWS_PER_SHEET, pvs_datacenter,
+        "Pricing estimator export for project %s: %d servers written, %d skipped (>%d limit), dc=%s, machines=%s",
+        project_id, written, skipped, pricing_template_filler._ROWS_PER_SHEET, pvs_datacenter, machine_counts,
     )
 
     if skipped > 0:
@@ -231,8 +231,21 @@ async def generate_pricing_estimator_export(
             pricing_template_filler._ROWS_PER_SHEET, skipped,
         )
 
+    # Expose summary counts as custom headers so the frontend can render a breakdown card.
+    # X-Written-Count:  total LPARs written
+    # X-Skipped-Count:  LPARs omitted (over sheet limit)
+    # X-Machine-Counts: JSON object e.g. {"S1022":12,"E1050":4}
+    import json as _json
+    extra_headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Written-Count": str(written),
+        "X-Skipped-Count": str(skipped),
+        "X-Machine-Counts": _json.dumps(machine_counts),
+        "Access-Control-Expose-Headers": "X-Written-Count, X-Skipped-Count, X-Machine-Counts",
+    }
+
     return StreamingResponse(
         io.BytesIO(filled_bytes),
         media_type=_XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=extra_headers,
     )

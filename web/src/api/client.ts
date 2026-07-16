@@ -200,6 +200,15 @@ export const api = {
       }).then(r => r.json()),
     delete: (id: string): Promise<Response> =>
       fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }),
+    duplicate: (id: string, name: string): Promise<Project> =>
+      fetch(`${BASE}/projects/${id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }).then(async r => {
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Duplicate failed'); }
+        return r.json();
+      }),
   },
   uploads: {
     upload: (projectId: string, file: File): Promise<any> => {
@@ -239,6 +248,12 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_profile: targetProfile }),
+      }).then(r => r.json()),
+    bulkExclude: (projectId: string, filterType: string, filterValue: string, reason?: string): Promise<{ updated_count: number; filter_type: string; filter_value: string }> =>
+      fetch(`${BASE}/projects/${projectId}/bulk-exclude`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filter_type: filterType, filter_value: filterValue, reason: reason || null }),
       }).then(r => r.json()),
   },
   processing: {

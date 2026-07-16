@@ -361,7 +361,7 @@ class TestFillPricingTemplate:
     def test_single_aix_record(self):
         template = _build_template()
         records = [_make_record("MYSERVER", cpus=8, mem_mb=65536, disk_mb=204800, os_family="AIX")]
-        filled, written, skipped = fill_pricing_template(template, records, pvs_datacenter="dal10")
+        filled, written, skipped, _ = fill_pricing_template(template, records, pvs_datacenter="dal10")
         assert written == 1
         assert skipped == 0
 
@@ -382,7 +382,7 @@ class TestFillPricingTemplate:
     def test_linux_byol_uses_tier3(self):
         template = _build_template()
         records = [_make_record("LINUXBOX", cpus=4, mem_mb=16384, disk_mb=102400, os_family="Linux BYOL")]
-        filled, written, _ = fill_pricing_template(template, records, pvs_datacenter="tok04")
+        filled, written, _, _ = fill_pricing_template(template, records, pvs_datacenter="tok04")
         ws_xml, ss_xml = _read_filled(filled)
 
         assert _get_cell_value(ws_xml, ss_xml, "N20") == "BYO Lnx / NA"
@@ -393,7 +393,7 @@ class TestFillPricingTemplate:
     def test_datacenter_uppercased(self):
         template = _build_template()
         records = [_make_record()]
-        filled, _, _ = fill_pricing_template(template, records, pvs_datacenter="lon06")
+        filled, _, _, _ = fill_pricing_template(template, records, pvs_datacenter="lon06")
         ws_xml, ss_xml = _read_filled(filled)
         assert _get_cell_value(ws_xml, ss_xml, "D20") == "LON06"
 
@@ -401,7 +401,7 @@ class TestFillPricingTemplate:
         """Single-CPU server must get minimum 0.5 entitled cores, not 0.25."""
         template = _build_template()
         records = [_make_record(cpus=1)]
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         ws_xml, ss_xml = _read_filled(filled)
         assert _get_cell_value(ws_xml, ss_xml, "G20") == 0.5
 
@@ -411,7 +411,7 @@ class TestFillPricingTemplate:
             _make_record(f"SRV-{i:03d}", cpus=4, mem_mb=16384, os_family="AIX")
             for i in range(10)
         ]
-        filled, written, skipped = fill_pricing_template(template, records)
+        filled, written, skipped, _ = fill_pricing_template(template, records)
         assert written == 10
         assert skipped == 0
         ws_xml, ss_xml = _read_filled(filled)
@@ -424,7 +424,7 @@ class TestFillPricingTemplate:
         template = _build_template()
         # Fill 5 records starting at row 20 — row 19 should still have LPAR_EXAMPLE
         records = [_make_record(f"SRV-{i}", cpus=2) for i in range(5)]
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         ws_xml, ss_xml = _read_filled(filled)
         # The example row (19) should still have its original shared-string value (idx 0 = LPAR_EXAMPLE)
         example_val = _get_cell_value(ws_xml, ss_xml, "B19")
@@ -434,7 +434,7 @@ class TestFillPricingTemplate:
         """calcChain.xml must be removed from the output zip."""
         template = _build_template()
         records = [_make_record()]
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         with zipfile.ZipFile(io.BytesIO(filled)) as zf:
             assert "xl/calcChain.xml" not in zf.namelist()
 
@@ -442,7 +442,7 @@ class TestFillPricingTemplate:
         """workbook.xml must have fullCalcOnLoad=1 after fill."""
         template = _build_template()
         records = [_make_record()]
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         with zipfile.ZipFile(io.BytesIO(filled)) as zf:
             wb_xml = zf.read("xl/workbook.xml").decode("utf-8")
         assert 'fullCalcOnLoad="1"' in wb_xml
@@ -453,7 +453,7 @@ class TestFillPricingTemplate:
             _make_record("INCLUDED"),
             {**_make_record("EXCLUDED"), "is_excluded": True},
         ]
-        filled, written, _ = fill_pricing_template(template, records)
+        filled, written, _, _ = fill_pricing_template(template, records)
         assert written == 1
         ws_xml, ss_xml = _read_filled(filled)
         assert _get_cell_value(ws_xml, ss_xml, "B20") == "INCLUDED"
@@ -464,7 +464,7 @@ class TestFillPricingTemplate:
             _make_record("PVS_SERVER"),
             {**_make_record("VPC_SERVER"), "server_type": "vm"},
         ]
-        filled, written, _ = fill_pricing_template(template, records)
+        filled, written, _, _ = fill_pricing_template(template, records)
         assert written == 1
 
     def test_missing_sheet_raises_value_error(self):
@@ -489,7 +489,7 @@ class TestFillPricingTemplate:
         """Server with >51 cores must get E1050."""
         template = _build_template()
         records = [_make_record(cpus=80, mem_mb=524288)]  # 512 GB RAM
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         ws_xml, ss_xml = _read_filled(filled)
         assert _get_cell_value(ws_xml, ss_xml, "E20") == "E1050"
 
@@ -497,6 +497,6 @@ class TestFillPricingTemplate:
         """Server with >120 cores must get E1080."""
         template = _build_template()
         records = [_make_record(cpus=150, mem_mb=1048576)]  # 1 TB RAM
-        filled, _, _ = fill_pricing_template(template, records)
+        filled, _, _, _ = fill_pricing_template(template, records)
         ws_xml, ss_xml = _read_filled(filled)
         assert _get_cell_value(ws_xml, ss_xml, "E20") == "E1080"

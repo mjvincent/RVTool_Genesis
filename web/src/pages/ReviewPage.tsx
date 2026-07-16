@@ -9,6 +9,7 @@ import AssumptionsPanel from '../components/AssumptionsPanel';
 import FailedRecordsPanel from '../components/FailedRecordsPanel';
 import BulkOSModal from '../components/BulkOSModal';
 import BulkNxfModal from '../components/BulkNxfModal';
+import BulkExcludeModal from '../components/BulkExcludeModal';
 
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -30,6 +31,9 @@ export default function ReviewPage() {
   const [nxfUnsupportedCount, setNxfUnsupportedCount] = useState(0);
   const [bulkNxfOpen, setBulkNxfOpen]   = useState(false);
   const [bulkNxfSuccess, setBulkNxfSuccess] = useState('');
+
+  const [bulkExcludeOpen, setBulkExcludeOpen]     = useState(false);
+  const [bulkExcludeSuccess, setBulkExcludeSuccess] = useState('');
 
   // ---------------------------------------------------------------------------
   // Load
@@ -108,6 +112,13 @@ export default function ReviewPage() {
     setTableKey(k => k + 1);
   }
 
+  function handleBulkExcludeApplied(count: number, filterType: string, filterValue: string) {
+    setBulkExcludeOpen(false);
+    setBulkExcludeSuccess(`Excluded ${count} record${count !== 1 ? 's' : ''} where ${filterType} matches "${filterValue}"`);
+    loadRecords();
+    setTableKey(k => k + 1);
+  }
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -153,6 +164,15 @@ export default function ReviewPage() {
                 ⚠ Fix Nano Profiles ({nxfUnsupportedCount})
               </Button>
             )}
+            {normalRecords.length > 0 && (
+              <Button
+                kind="ghost"
+                size="md"
+                onClick={() => { setBulkExcludeSuccess(''); setBulkExcludeOpen(true); }}
+              >
+                Bulk Exclude
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -189,6 +209,17 @@ export default function ReviewPage() {
             lowContrast
             style={{ marginBottom: '1.5rem' }}
             onCloseButtonClick={() => setBulkNxfSuccess('')}
+          />
+        )}
+
+        {bulkExcludeSuccess && (
+          <InlineNotification
+            kind="success"
+            title="Bulk exclusion complete"
+            subtitle={bulkExcludeSuccess}
+            lowContrast
+            style={{ marginBottom: '1.5rem' }}
+            onCloseButtonClick={() => setBulkExcludeSuccess('')}
           />
         )}
 
@@ -263,6 +294,15 @@ export default function ReviewPage() {
           unsupportedCount={nxfUnsupportedCount}
           onClose={() => setBulkNxfOpen(false)}
           onApplied={handleBulkNxfApplied}
+        />
+      )}
+
+      {bulkExcludeOpen && (
+        <BulkExcludeModal
+          projectId={projectId}
+          records={normalRecords}
+          onClose={() => setBulkExcludeOpen(false)}
+          onApplied={handleBulkExcludeApplied}
         />
       )}
     </>
