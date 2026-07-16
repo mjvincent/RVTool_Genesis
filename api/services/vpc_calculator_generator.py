@@ -535,6 +535,9 @@ _DATA_DOMAINS_ROWS = [
     [None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,"vx2d-88x1232",None],
     [None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,"vx2d-144x2016",None],
     [None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,"vx2d-176x2464",None],
+    # nxf Flex-Nano series (confirmed in IBM reference file Data Domains)
+    [None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,"nxf-2x1",None],
+    [None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,"nxf-2x2",None],
 ]
 
 # Pad all rows to 28 columns (some rows have fewer entries)
