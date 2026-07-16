@@ -50,7 +50,7 @@ export default function UploadPage() {
       setUploadedFile({ name: file.name, count });
       setExistingCount(count);
     } catch (err: any) {
-      setUploadError(err?.message || 'Upload failed. Please try again.');
+      setUploadError(`Upload failed: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setUploading(false);
     }

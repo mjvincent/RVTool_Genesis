@@ -24,8 +24,8 @@ export default function BulkNxfModal({ projectId, unsupportedCount, onClose, onA
     try {
       const result = await api.uploads.bulkNxfReplace(projectId, targetProfile);
       onApplied(result.updated_count, result.target_profile);
-    } catch {
-      setError('Failed to apply profile replacement. Please try again.');
+    } catch (err) {
+      setError(`Failed to apply profile replacement: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setSaving(false);
     }

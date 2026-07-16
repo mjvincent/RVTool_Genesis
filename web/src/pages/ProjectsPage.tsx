@@ -184,7 +184,7 @@ export default function ProjectsPage() {
       );
       await load(currentFolder);
     } catch (err: any) {
-      setRestoreError(err.message ?? 'Restore failed. Please try again.');
+      setRestoreError(`Restore failed: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setRestoring(false);
     }

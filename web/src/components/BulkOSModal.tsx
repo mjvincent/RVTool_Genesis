@@ -42,8 +42,8 @@ export default function BulkOSModal({ projectId, records, onClose, onApplied }: 
     try {
       const result = await api.uploads.bulkOsReplace(projectId, fromOs, toOs);
       onApplied(result.updated_count, result.from_os, result.to_os);
-    } catch {
-      setError('Failed to apply OS replacement. Please try again.');
+    } catch (err) {
+      setError(`Failed to apply OS replacement: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setSaving(false);
     }

@@ -1,8 +1,12 @@
 # RVTool Genesis
 
-A containerized tool that converts customer server inventory spreadsheets into IBM RVTools-compatible output for use with the IBM Cloud sizing tools.
+A containerized tool that converts customer server inventory spreadsheets into IBM sizing outputs for IBM Cloud migration proposals — with zero manual data entry.
 
 Powered by a **pluggable LLM backend** — use IBM watsonx.ai for IBM engagement work, or run fully local with Ollama (no API key, no cloud). Configure your preferred provider in the Settings page.
+
+📖 [User Guide](docs/USER_GUIDE.md) · ⚙️ [Operations Guide](docs/OPERATIONS_GUIDE.md)
+
+---
 
 ## Why this tool exists
 
@@ -27,14 +31,35 @@ With standard workday constraints (lunch, hourly breaks, daily distractions), a 
 > - **Optimistic (1.5 min/entry):** 6–6.5 full workdays dedicated entirely to this task
 > - **Conservative (2.0 min/entry):** 8–8.5 full workdays
 
-**RVTool Genesis eliminates this entirely.** Upload the customer's server inventory spreadsheet, let the AI normalize and map every record to IBM Cloud VPC profiles, review the output in minutes, and download a Cloud Solution Export ready to load directly into the IBM Cloud Cost Estimator — with every AI decision documented as an auditable assumption.
+**RVTool Genesis eliminates this entirely.** Upload the customer's server inventory spreadsheet, let the AI normalize and map every record to IBM Cloud profiles, review the output in minutes, and download a ready-to-upload Cloud Solution Export — with every AI decision documented as an auditable assumption.
+
+---
 
 ## What it does
 
-1. **Upload** any customer-produced spreadsheet (Excel/CSV) listing desired virtual or bare metal servers — any column layout, freeform
-2. **AI Normalization** — maps freeform customer columns to IBM VPC profiles, fills in missing data (OS images, disk sizes, IOPS tiers, regions), and documents every inference as an assumption
-3. **Review** — inspect all normalized records and AI assumptions before exporting; exclude servers, edit fields inline
-4. **Export** — download a **Cloud Solution Export** (3-sheet IBM Cloud Cost Estimator workbook), a full **RVTools Export** (22-sheet, for VCF Migration Lite), and a separate **AI Assumptions Report** documenting every decision
+1. **Upload** any customer-produced spreadsheet (Excel/CSV) listing servers — any column layout, freeform
+2. **AI Normalization** — maps freeform customer columns to IBM VPC / PowerVS fields, fills in missing data (OS images, disk sizes, storage tiers, regions), and documents every inference as an assumption
+3. **Review** — inspect all normalized records and AI assumptions; exclude servers, edit fields inline, bulk-replace OS values, fix unsupported Flex-Nano profiles
+4. **Export** — download output files for your IBM pricing tool of choice (see All Exports below)
+
+x86 / VPC records and PowerVS (AIX / IBM i) records are **automatically separated** into independent export sets.
+
+---
+
+## All Exports
+
+| Output | Format | Filename pattern | IBM tool | Notes |
+|---|---|---|---|---|
+| **Cloud Solution Export** | 3-sheet .xlsx | `CloudSolution_<name>_<date>.xlsx` | IBM Cloud Cost Estimator | ⭐ Primary x86 deliverable |
+| **RVTools Export (x86)** | 22-sheet .xlsx | `RVTools_<name>_<date>.xlsx` | VCF Migration Lite / IBM Cool | Full 22-tab format |
+| **AI Assumptions Report (x86)** | .xlsx | `Assumptions_<name>_<date>.xlsx` | Customer review | Every AI inference documented |
+| **PowerVS Cloud Solution Export** | 3-sheet .xlsx | `CloudSolution_PowerVS_<name>_<date>.xlsx` | IBM PowerVS Cost Estimator | ⭐ Primary PowerVS deliverable |
+| **PowerVS Cool Tool Export** | 4-sheet .xlsx | `COOL_PowerVS_<name>_<date>.xlsx` | IBM Cool (PowerVS input) | Upload separately from x86 |
+| **PowerVS RVTools Export** | 22-sheet .xlsx | `RVTools_PowerVS_<name>_<date>.xlsx` | VCF Migration Lite (PowerVS) | Full 22-tab format |
+| **PowerVS AI Assumptions Report** | .xlsx | `Assumptions_PowerVS_<name>_<date>.xlsx` | Customer review | PowerVS records only |
+| **IBM Price Estimator (populated)** | .xlsx | `PowerVS_PriceEstimator_<name>_<date>.xlsx` | Excel | Per-LPAR PowerVS pricing |
+
+---
 
 ## Prerequisites
 
@@ -45,6 +70,8 @@ With standard workday constraints (lunch, hourly breaks, daily distractions), a 
   # Install Ollama from https://ollama.com then pull the model:
   ollama pull phi4-mini
   ```
+
+---
 
 ## Quick Start
 
@@ -63,6 +90,8 @@ The setup script handles everything:
 
 > **If the script isn't executable after cloning:** `chmod +x setup.sh`
 
+---
+
 ## Stopping and Restarting
 
 ```bash
@@ -73,6 +102,8 @@ docker compose down
 ./setup.sh
 ```
 
+---
+
 ## Ports
 
 | Service | URL | Description |
@@ -80,6 +111,8 @@ docker compose down
 | Web UI | http://localhost:3001 | React + Carbon Design System |
 | API | http://localhost:8001 | FastAPI — Swagger docs at `/api/docs` |
 | PostgreSQL | localhost:5433 | Local DB (for direct inspection) |
+
+---
 
 ## Makefile Commands
 
@@ -93,6 +126,8 @@ make test      # Run integration tests inside the api container
 make shell-api # Shell into the api container
 make shell-db  # psql shell into the database
 ```
+
+---
 
 ## Environment Variables
 
@@ -113,29 +148,37 @@ Generate a strong `SECRET_KEY`:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
+---
+
 ## Architecture
 
 ```
 OrbStack / Docker Compose
 ├── web :3001  (React + Carbon v11)
-│   ├── ProjectsPage       — create/manage projects
+│   ├── ProjectsPage       — create/manage projects, folder hierarchy
 │   ├── UploadPage         — file upload
 │   ├── NormalizePage      — AI normalization progress
 │   ├── ReviewPage         — review records + assumptions
-│   ├── ExportPage         — download RVTools + Assumptions files
-│   └── SettingsPage       — LLM provider configuration
+│   │   ├── BulkOSModal        — bulk OS replace across all matching records
+│   │   ├── BulkNxfModal       — upgrade unsupported nxf-1x* profiles
+│   │   └── EditRecordModal    — inline vinfo field editing
+│   ├── ExportPage         — download all 8 output files + IBM Price Estimator
+│   └── SettingsPage       — LLM provider configuration + model recommendations
 │
 ├── api :8001  (FastAPI + Python 3.12)
-│   ├── /api/projects          — project CRUD
-│   ├── /api/uploads           — file upload + raw parse
+│   ├── /api/projects          — project CRUD + region settings
+│   ├── /api/folders           — folder CRUD + project move
+│   ├── /api/uploads           — file upload + raw parse + record edit
+│   │                            bulk-os-replace, bulk-nxf-replace, nxf-count
 │   ├── /api/process           — AI normalization (background tasks)
-│   ├── /api/export            — RVTools + Assumptions .xlsx generation
-│   ├── /api/settings          — LLM provider settings (GET/POST/test)
+│   ├── /api/export            — 7 RVTools + Assumptions export endpoints
+│   ├── /api/projects/{id}/pricing-template  — IBM Price Estimator upload + populate
+│   ├── /api/settings          — LLM provider settings + model recommendations
 │   ├── /api/projects/{id}/backup  — single-project JSON backup
 │   ├── /api/backup/all            — full system .zip backup
-│   ├── /api/restore               — restore from .json or .zip
-│   │
-│   └── services/
+│   └── /api/restore               — restore from .json or .zip
+│
+│   services/
 │       ├── spreadsheet_parser        — pandas: handles any freeform .xlsx/.csv
 │       ├── ai_normalizer             — LLM dispatcher + cloud/Ollama adapters
 │       ├── crypto                    — AES-256 Fernet encryption for API keys
@@ -143,29 +186,35 @@ OrbStack / Docker Compose
 │       ├── rvtools_generator         — openpyxl: generates 22-sheet RVTools file
 │       ├── assumptions_generator     — openpyxl: generates Assumptions Report
 │       ├── vpc_calculator_generator  — openpyxl: generates 3-sheet VPC Cloud Solution Export
-│       ├── powervs_calculator_generator — generates IBM PowerVS Calculator workbook
+│       ├── powervs_calculator_generator — generates 3-sheet PowerVS Cloud Solution Export
+│       ├── pricing_template_filler   — zip-level XML surgery: fills IBM Price Estimator
 │       ├── model_catalog             — curated LLM model catalog + upgrade recommendations
 │       └── validator                 — structural validation for generated files
 │
 └── db :5433  (PostgreSQL 16)
     ├── projects          (vpc_region, vpc_datacenter, pvs_region, pvs_datacenter)
-    ├── folders           (hierarchical project organisation)
+    ├── folders           (hierarchical project organisation — max depth 2)
     ├── uploads
     ├── server_records    (JSONB: raw_data, normalized_data, server_type, is_excluded)
     ├── assumptions
     ├── rvtools_exports
     ├── assumptions_exports
+    ├── pricing_templates (raw IBM Price Estimator .xlsx per project)
     └── llm_settings      (single-row: active provider + encrypted keys,
                            previous_model, recommendation_snoozed_until)
-│
+
 [host Mac — NOT in Docker, only when using Ollama provider]
 └── Ollama :11434
     └── phi4-mini  ← reached via host.docker.internal from containers
 ```
 
+---
+
 ## Generated RVTools Schema
 
-The exported file contains exactly 4 sheets consumed by the IBM Cool tool:
+The tool generates two RVTools formats:
+
+**4-sheet format** (IBM Cool input — `COOL_*.xlsx`):
 
 | Sheet | Columns | Description |
 |---|---|---|
@@ -173,6 +222,13 @@ The exported file contains exactly 4 sheets consumed by the IBM Cool tool:
 | vNetwork | 17 | NIC details: IP, adapter, MAC, network |
 | vPartition | 13 | Disk/partition details (one row per disk per VM) |
 | vHost | 28 | Physical host details: CPU model, cores, ESX version |
+
+**22-sheet format** (VCF Migration Lite / full RVTools 4.x):
+
+All 4 sheets above plus `vCPU`, `vMemory`, `vDisk`, `vTools`, `vHealth`, `vFileInfo`,
+and 12 header-only stub sheets required for format validation.
+
+---
 
 ## AI Assumptions
 
@@ -185,97 +241,55 @@ Every field that the AI infers, defaults, or converts is recorded as an assumpti
 
 The Assumptions Report is a **separate `.xlsx` file** and does **not** appear in the RVTools export (extra tabs break IBM Cool tool parsing).
 
-## Testing
+---
 
-```bash
-# Run integration tests against the running stack
-make test
+## Bulk Operations
 
-# API docs (Swagger UI)
-open http://localhost:8001/api/docs
-```
+### Bulk OS Replace
 
-## Sample File
+Replaces the OS family on all records matching a chosen value in a single operation.
+Useful for generating alternative pricing scenarios (e.g. replacing paid Windows or
+RHEL licences with a free Linux variant) without manually editing every record.
 
-A real RVTools export is included at `Samples/SizingWorkshop-RVTools.xlsx` as a reference for the target output schema. You can upload it directly to the app to test the full pipeline end-to-end.
+- Open the Review page → click **Bulk OS Replace**
+- Choose the source OS and the replacement OS
+- All matching non-excluded records are updated atomically
+- Every change is logged as an assumption in the AI Assumptions Report
 
-## Spreadsheet Parser Notes
+### Fix Nano Profiles (Flex-Nano upgrade)
 
-The parser handles real-world freeform spreadsheets automatically:
+The IBM Cloud Solutioning Tool only recognizes `nxf-2x1` and `nxf-2x2` in its
+Data Domains sheet. Servers with `nxf-1x1`, `nxf-1x2`, or `nxf-1x4` profiles will
+silently fail to populate when the Cloud Solution Export is imported.
 
-- **Any column layout** — no template required; columns are mapped by the AI
-- **Phantom rows** — Excel workbooks often contain thousands of empty rows beyond the last data row (Excel's max is 1,048,576). The parser identifies real rows (≥ 2 non-null cells) *before* forward-filling merged cells, preventing ghost rows from being counted as servers
-- **Merged cells** — forward-fill propagates values across visually merged cells
-- **Mixed types** — all values are normalised to JSON-safe Python types (no numpy, no NaT)
-- **Title/banner rows** — if row 0 has fewer than 2 non-null headers, the parser falls back to row 1 as the header row
-- **Supported formats** — `.xlsx`, `.xls`, `.csv` up to 50 MB
+When unsupported profiles are detected, a **warning banner** appears on the Review page.
+Click **Fix Nano Profiles** to upgrade all affected servers to `nxf-2x1` or `nxf-2x2`
+in one action. The change is logged as an assumption.
 
-## AI Normalization: Resilience
+---
 
-The normalizer is designed to **never leave a record permanently stuck**:
+## IBM Price Estimator
 
-- **120 s timeout** — each Ollama call is limited to 120 seconds (~10× the average phi4-mini response time). If Ollama hangs, the timeout fires.
-- **Automatic retry** — on timeout the call is retried once (with a 2 s pause to let Ollama clear its queue).
-- **Python fallback synthesizer** — if both attempts fail or return invalid JSON, the record is synthesized directly from raw spreadsheet data using IBM defaults. It completes as `complete` (not `error`) with low-confidence assumptions noting the fallback.
-- **Reset stuck endpoint** — `POST /api/projects/{id}/processing/reset-stuck` resets any records stuck in `processing` state back to `pending` (useful after container restarts mid-run).
-- **UI "Reset stuck & resume" button** — appears automatically after a record takes more than 90 seconds, allowing one-click recovery without needing the terminal.
+The IBM Power Virtual Server Price Estimator is an IBM-provided Excel workbook that
+calculates per-LPAR pricing. RVTool Genesis populates its yellow input cells automatically.
 
-## RVTools Output: All 22 Sheets
+**Workflow (per project):**
+1. Upload the IBM Price Estimator `.xlsx` once via the Export page
+2. Click **Populate & Download** — the tool writes all PowerVS server data into the
+   yellow input area (LPAR name, system type, cores, memory, OS, storage)
+3. Open the downloaded file in **Excel** — pricing formulas recalculate automatically
 
-The generated `.xlsx` contains all standard RVTools 4.x sheets required by downstream tools (IBM Cool, VCF Migration Lite, etc.):
+**Machine selection logic:**
 
-| Sheet | Data |
-|-------|------|
-| `vInfo` | VM name, CPU, RAM, OS, datacenter, cluster |
-| `vCPU` | CPU configuration per VM |
-| `vMemory` | Memory configuration per VM |
-| `vDisk` | One row per disk per VM (capacity, mode, path, thin flag) |
-| `vPartition` | Partition-level disk usage |
-| `vNetwork` | NIC details, IP, adapter, MAC |
-| `vTools` | VMware Tools version/status |
-| `vHealth` | VM health status |
-| `vFileInfo` | VM config file path |
-| `vHost` | Physical host details |
-| `vFloppy`, `vCD`, `vSnapshot`, `vRP`, `vCluster`, `vHBA`, `vNIC`, `vSwitch`, `vPort`, `vSC+VM`, `vDatastore`, `vMultiWriter` | Header-only stubs (required for format validation) |
+| Criteria | Assigned system |
+|---|---|
+| ≤ 51 cores AND ≤ 1,904 GB RAM | S1022 (Power10 scale-out) |
+| ≤ 120 cores | E1050 (Power10 enterprise) |
+| > 120 cores | E1080 (Power10 enterprise, largest) |
 
-## LLM Providers
+The template is stored per-project. Replace it at any time by re-uploading.
 
-The active LLM provider is configured in the **Settings** page (`/settings`) and
-persisted to the database — no container restart needed after switching.
-
-| Provider | API Key Required | Notes |
-|---|---|---|
-| **Ollama (local)** | No | Default. Requires Ollama running on your Mac. `ollama pull phi4-mini` |
-| **IBM watsonx.ai** ⭐ | IBM Cloud API key + Project ID | Recommended for IBM engagement work. Use `ibm/granite-3-8b-instruct` |
-| **OpenAI-compatible** | API key | Works with OpenAI, Azure OpenAI, local vLLM, LM Studio |
-| **Anthropic** | API key | Claude models (Haiku recommended for speed/cost) |
-
-### Getting an IBM watsonx.ai API key
-
-1. Log in to [cloud.ibm.com](https://cloud.ibm.com)
-2. Go to **Manage → Access (IAM) → API keys** → Create
-3. Open your watsonx.ai project → **Manage → General** → copy the Project ID
-4. Enter both in the Settings page and click **Test connection**
-
-### IBM IAM token caching
-
-For watsonx.ai, an IBM IAM Bearer token is obtained once and cached for 50 minutes
-(tokens expire at 60 min). This means IAM is only called once per processing run, not
-once per server record.
-
-### Security
-
-- API keys are encrypted with AES-256 (Fernet) before being stored in PostgreSQL
-- Keys are never logged or returned in plaintext from any API endpoint
-- Only a masked hint (`••••••••abcd`) is displayed in the UI
-- Set a strong `SECRET_KEY` in `.env` before using cloud providers
-
-### Switching providers
-
-Changes take effect immediately on the next `POST /process` call. No container restart
-is needed. The Python fallback synthesizer remains active as a last resort if the cloud
-provider fails.
-
+---
 
 ## PowerVS Auto-Detection
 
@@ -291,11 +305,9 @@ regardless of the LLM's response.
 
 1. `server_type` is set to `"powervs"` (shown as a purple "PowerVS" tag in the Review table)
 2. A high-confidence assumption is added explaining the designation
-3. In the Export page, PowerVS records are **routed to a separate set of exports**:
-   - **PowerVS Cloud Solutioning Tool Export** — 22-sheet IBM Cool workbook, PowerVS only
-   - **PowerVS Assumptions Report** — AI decisions for PowerVS records only
+3. In the Export page, PowerVS records are **routed to a separate set of exports** (all four listed in the All Exports table above)
 4. Standard x86 exports **exclude** PowerVS records
-5. Both exports are generated independently and uploaded to IBM Cool separately
+5. Both export sets are generated independently and uploaded to IBM Cool separately
 
 ### Why separate exports?
 
@@ -325,17 +337,24 @@ the Review table.
 
 - Check the "Exclude" checkbox on any row → record is immediately excluded (persists to DB)
 - Excluded rows display at 55% opacity with a strikethrough server name
-- An optional reason text field appears in the expanded row (saves on blur or Enter)
+- An optional reason text field appears — enter text and the reason is saved automatically
 - Excluded records are **omitted from all RVTools exports** (x86 and PowerVS)
 - Excluded records appear in an **"Excluded Servers" audit sheet** in the Assumptions
   Report `.xlsx`, showing the server name, OS, type, reason, and timestamp
 
-### Use cases
+---
 
-- Server already migrated
-- Decommissioned / out of scope for this engagement
-- Test/dev server not included in the sizing
-- Customer explicitly requested exclusion
+## Folder Organization
+
+Projects can be grouped into a two-level folder hierarchy for engagement-level
+organization: **Root → Customer → Engagement**.
+
+From the Projects page:
+- **New folder** — creates a folder at the current level (root or inside another folder)
+- **⋮ menu on a folder** — rename or delete the folder
+- **⋮ menu on a project → Move to folder** — move the project into any folder
+
+Deleting a folder moves its projects to root; it does not delete the projects.
 
 ---
 
@@ -379,24 +398,6 @@ Click the **Backup all** button in the Projects page header. Downloads
    `(restored YYYY-MM-DD)` suffix so they're distinguishable from originals
 4. Navigate straight to **Review → Export** — no re-normalization needed
 
-### Backup bundle format
-
-```json
-{
-  "schema_version": 1,
-  "exported_at": "ISO-8601 timestamp",
-  "project": { "id", "name", "description", "created_at", "updated_at" },
-  "records": [
-    {
-      "id", "raw_data", "normalized_data", "server_type",
-      "processing_status", "is_excluded", "exclusion_reason",
-      "assumptions": [ { "field_name", "assumed_value", "reasoning", "confidence" } ]
-    }
-  ],
-  "original_file": { "filename", "row_count", "data_base64" }
-}
-```
-
 ### Docker volume durability
 
 The PostgreSQL data lives in a **named Docker volume** (`postgres_data`) that survives
@@ -406,7 +407,117 @@ archiving.
 
 ---
 
+## Testing
+
+```bash
+# Run integration tests against the running stack
+make test
+
+# API docs (Swagger UI)
+open http://localhost:8001/api/docs
+```
+
+---
+
+## Spreadsheet Parser Notes
+
+The parser handles real-world freeform spreadsheets automatically:
+
+- **Any column layout** — no template required; columns are mapped by the AI
+- **Phantom rows** — Excel workbooks often contain thousands of empty rows beyond the last data row (Excel's max is 1,048,576). The parser identifies real rows (≥ 2 non-null cells) *before* forward-filling merged cells, preventing ghost rows from being counted as servers
+- **Merged cells** — forward-fill propagates values across visually merged cells
+- **Mixed types** — all values are normalised to JSON-safe Python types (no numpy, no NaT)
+- **Title/banner rows** — if row 0 has fewer than 2 non-null headers, the parser falls back to row 1 as the header row
+- **Supported formats** — `.xlsx`, `.xls`, `.csv` up to 50 MB
+
+---
+
+## AI Normalization: Resilience
+
+The normalizer is designed to **never leave a record permanently stuck**:
+
+- **120 s timeout** — each Ollama call is limited to 120 seconds (~10× the average phi4-mini response time). If Ollama hangs, the timeout fires.
+- **Automatic retry** — on timeout the call is retried once (with a 2 s pause to let Ollama clear its queue).
+- **Python fallback synthesizer** — if both attempts fail or return invalid JSON, the record is synthesized directly from raw spreadsheet data using IBM defaults. It completes as `complete` (not `error`) with low-confidence assumptions noting the fallback.
+- **Reset stuck endpoint** — `POST /api/projects/{id}/processing/reset-stuck` resets any records stuck in `processing` state back to `pending` (useful after container restarts mid-run).
+- **UI "Reset stuck & resume" button** — appears automatically after a record takes more than 90 seconds, allowing one-click recovery without needing the terminal.
+
+---
+
+## LLM Providers
+
+The active LLM provider is configured in the **Settings** page (`/settings`) and
+persisted to the database — no container restart needed after switching.
+
+| Provider | API Key Required | Notes |
+|---|---|---|
+| **Ollama (local)** | No | Default. Requires Ollama running on your Mac. `ollama pull phi4-mini` |
+| **IBM watsonx.ai** ⭐ | IBM Cloud API key + Project ID | Recommended for IBM engagement work. Use `ibm/granite-3-8b-instruct` |
+| **OpenAI-compatible** | API key | Works with OpenAI, Azure OpenAI, local vLLM, LM Studio |
+| **Anthropic** | API key | Claude models (Haiku recommended for speed/cost) |
+
+### Getting an IBM watsonx.ai API key
+
+1. Log in to [cloud.ibm.com](https://cloud.ibm.com)
+2. Go to **Manage → Access (IAM) → API keys** → Create
+3. Open your watsonx.ai project → **Manage → General** → copy the Project ID
+4. Enter both in the Settings page and click **Test connection**
+
+### IBM IAM token caching
+
+For watsonx.ai, an IBM IAM Bearer token is obtained once and cached for 50 minutes
+(tokens expire at 60 min). This means IAM is only called once per processing run, not
+once per server record.
+
+### Model recommendations
+
+When a newer or more capable model is available for your configured provider, a
+**recommendation banner** appears at the top of the Settings page with three options:
+- **Apply** — upgrades immediately; previous model is saved for rollback
+- **Roll back** — returns to the model used before the last apply
+- **Snooze for 7 days** — dismisses the banner until next week
+
+### Security
+
+- API keys are encrypted with AES-256 (Fernet) before being stored in PostgreSQL
+- Keys are never logged or returned in plaintext from any API endpoint
+- Only a masked hint (`••••••••abcd`) is displayed in the UI
+- Set a strong `SECRET_KEY` in `.env` before using cloud providers
+
+### Switching providers
+
+Changes take effect immediately on the next `POST /process` call. No container restart
+is needed. The Python fallback synthesizer remains active as a last resort if the cloud
+provider fails.
+
+---
+
 ## Changelog
+
+### v1.2.0
+
+- **Data Domains fix** — `_DATA_DOMAINS_ROWS` expanded from 75 to 174 rows covering all non-Flex IBM VPC profile families (`bx2-*`, `cx2-*`, `mx2-*`, `bx3d-*`, `cx3d-*`, `mx3d-*`, `ux2d-*`, `gx2-*`, `gx3-*`, `vx2d-*`, `ox2-*`). Resolves blank rows in the IBM Cloud Cost Estimator after import.
+- **nxf-2x1 and nxf-2x2 added to Data Domains** — Flex-Nano profiles now recognized by the IBM Cloud Solutioning Tool.
+- **Flex-Nano profile warning + bulk replace** — Review page shows a warning banner when any x86 server has an `nxf-1x*` profile not recognized by the IBM Solutioning Tool. "Fix Nano Profiles" button upgrades all affected servers to `nxf-2x1` or `nxf-2x2` in one action.
+- **Edit record modal** — Any normalized record can be edited inline from the Review table. 11 editable vinfo fields with critical (red) and advisory (yellow) severity indicators. Failed records can be pre-filled from raw spreadsheet data and promoted to `complete` on manual edit.
+- **Bulk OS Replace** — Replace the OS family on all matching records in one operation. Changes are logged as assumptions. Useful for pricing scenario modelling (e.g. Windows → Linux).
+- **Folder organization** — Two-level folder hierarchy (Root → Customer → Engagement) for grouping projects. Create, rename, delete folders; move projects between folders.
+
+---
+
+### v1.1.0
+
+- **PowerVS Cloud Solution Export** — 3-sheet IBM PowerVS Calculator workbook (Project Settings, Exceptions, Data Domains). PowerVS equivalent of the x86 Cloud Solution Export.
+- **PowerVS Cool Tool Export** — 4-sheet RVTools workbook for IBM Cool PowerVS pricing. Upload separately from the x86 Cool Tool export.
+- **PowerVS RVTools Export (22-sheet)** — Full 22-sheet format for VCF Migration Lite.
+- **PowerVS AI Assumptions Report** — Assumptions for PowerVS records only.
+- **IBM Price Estimator template filler** — Upload the IBM Power Virtual Server Price Estimator once per project. Click "Populate & Download" to fill the yellow input cells from PowerVS records using surgical XML surgery (preserves all formulas and named ranges). Machine type auto-selected: S1022 / E1050 / E1080.
+- **Backup & Restore** — Download any project as a portable `.json` bundle; full system `.zip` backup; restore on any instance. No re-normalization needed.
+- **Multi-provider LLM support** — Settings page: Ollama (local), IBM watsonx.ai, OpenAI-compatible, Anthropic Claude. AES-256 key encryption for all cloud API keys.
+- **Model recommendations** — Auto-detect available model upgrades; one-click apply, rollback, or 7-day snooze.
+- **PowerVS region/datacenter per project** — Independent from VPC region; set at project creation; editable on the Export page.
+
+---
 
 ### v1.0.0 — First stable release
 
@@ -416,56 +527,12 @@ archiving.
 - **PowerVS OS families** — Eight IBM Cool PowerVS OS families (`AIX`, `IBM i`, `IBM i MOL`, `Linux BYOL`, `SAP SUSE`, `SAP Red Hat`, `Red Hat GP`, `SUSE GP`) now mapped at normalize time and written to `"OS according to the configuration file"` in both the 4-sheet and 22-sheet RVTools exports.
 - **`Operating System VS` column** — Cloud Solution Export now populates the IBM VPC stock image name for every x86 row, including SAP (RHEL/SUSE) and SQL Server variants.
 - **Extended OS normalisation** — Added Rocky Linux, AlmaLinux, Fedora, IBM i, IBM i MOL, RHEL/SUSE for SAP, and Windows with SQL Server patterns to the AI normalizer and frontend OS picker.
-- **VERSION file** — Single source of truth for application version at repo root; `web/package.json` and `api/main.py` both set to `1.0.0`.
-
-### feat/vpc-calculator-export
-- **Cloud Solution Export** — new 3-sheet IBM Cloud Cost Estimator workbook (Project Settings, Exceptions, Data Domains) generated directly from normalized records; eliminates the need for the intermediate `rvtools2vpc` web tool
-- **IBM VPC profile selection** — Flex-Compute (`cxf`), Flex-Balanced (`bxf`), Flex-Memory (`mxf`) chosen automatically from CPU/RAM ratio; profiles snap to nearest standard IBM VPC size
-- **OS → IBM image mapping** — 26 pattern rules map customer OS strings to the correct IBM VPC stock image (Windows Server 2008–2022, RHEL 7/8/9, SUSE, Ubuntu, Debian, CentOS/Stream, Rocky, Fedora CoreOS)
-- **Exceptions sheet** — VMs with no matching IBM VPC profile are flagged `no_matching_profile` and written to a separate Exceptions sheet, mirroring the `rvtools2vpc` tool behaviour
-- **Per-project region/zone** — IBM Cloud target region and availability zone are configured at project creation (15 regions, all standard zones) and stamped into every row of the output
-- **`POST /api/projects/{id}/export/vpc-calculator`** — new endpoint; filename `VPC_Calculator_<ProjectName>_<date>.xlsx`
-- **DB migration** `c3d4e5f6a7b8` — `vpc_region` + `vpc_datacenter` columns on `projects` table (defaults `us-south` / `us-south-1`)
-- **Export page** — Cool Tool Export card removed; VPC Calculator renamed to Cloud Solution Export; 3-card grid (Cloud Solution + RVTools + AI Assumptions)
-- **README** — "Why this tool exists" section with the manual-entry time analysis
-
-### feat/backup-restore
-- **Project backup** — download any project as a portable `.json` bundle (normalized records + assumptions)
-- **Full system backup** — "Backup all" downloads a `.zip` of every project
-- **Restore** — upload a `.json` or `.zip` to recreate projects on any RVTool Genesis instance; no re-normalization needed
-- **Original file option** — optional `include_file` flag embeds the source spreadsheet in the bundle (base64)
-- **`POST /api/restore`** — accepts `.json` and `.zip`, always creates new projects (never overwrites), appends `(restored YYYY-MM-DD)` to names
-- **`GET /api/projects/{id}/backup`** and **`GET /api/backup/all`** — streaming download endpoints
-
----
-
-### feat/powervs-exclusion
-- **PowerVS auto-detection** — AIX and IBM i operating systems are automatically designated as `server_type = "powervs"` by both the LLM and Python fallback. Enforced as a guaranteed post-processing step.
-- **Separate PowerVS exports** — Export page generates two independent 22-sheet IBM Cool workbooks: one for x86/VPC records and one for PowerVS records. Each is uploaded to IBM Cool separately for independent pricing.
-- **Mixed-workload banner** — When a project contains both x86 and PowerVS records, a banner on the Export page explains the automatic separation.
-- **Server exclusion** — Checkbox in the Review table excludes servers from all exports. Optional reason stored in DB and surfaced in an "Excluded Servers" audit sheet in the Assumptions Report.
-- **DB migration** — `is_excluded` (boolean) and `exclusion_reason` (text) columns added to `server_records`.
-- **Purple "PowerVS" tag** — Type column in Review table now has three distinct tags: Virtual (blue), Bare Metal (teal), PowerVS (purple).
-- **`PATCH /records/{id}/exclude`** — New endpoint to toggle exclusion and set reason, independent of the vinfo editor.
-
-### feat/llm-providers
-- **Multi-provider LLM support** — Settings page lets you switch between Ollama (local), IBM watsonx.ai, OpenAI-compatible, and Anthropic Claude
-- **IBM watsonx.ai integration** — IAM token exchange + 50-min cache; defaults to `ibm/granite-3-8b-instruct`
-- **AES-256 key encryption** — cloud API keys encrypted with Fernet before PostgreSQL storage; never logged or returned in plaintext
-- **Test Connection button** — validates provider credentials and shows latency + model response before saving
-- **Settings nav link** — "Settings" added to the top navigation bar
-- **`cryptography` dependency** — added to `requirements.txt` (no vendor SDK needed)
-
-### feat/resilience-and-ux
-- **Full 22-sheet RVTools output** — adds all missing tabs (`vDisk`, `vCPU`, `vMemory`, `vTools`, `vHealth`, `vFileInfo`, and 12 stub sheets). Fixes "Unrecognised source format" error from VCF Migration Lite.
-- **Ollama timeout + retry** — per-record timeout reduced from 300 s to 120 s; one automatic retry; Python fallback synthesizer on failure. Records can no longer get permanently stuck.
-- **Reset-stuck endpoint** — `POST /api/projects/{id}/processing/reset-stuck` resets orphaned `processing` records.
-- **Per-record heartbeat UI** — Normalize page shows elapsed time on the current record with an animated pulse dot. After 90 s, a "Reset stuck & resume" button appears.
-- **NormalizePage Start button** — fixed: fresh projects (all-pending) no longer enter the "in-progress" display state immediately, hiding the Start button.
-- **Export filenames** — downloads now use the server-supplied `Content-Disposition` filename (e.g. `RVTools_ProjectName_20260709.xlsx`) instead of the bare UUID.
-
-### Previous fixes
-- **Parser phantom-row fix** — `ffill` was propagating last-row values into thousands of Excel phantom rows before `dropna` ran, inflating record counts (e.g. 88 servers showing as 413). Fixed by snapshotting a "real row" mask before `ffill` and filtering to it afterwards.
-- **File-replace doubling** — uploading a replacement file now clears all previous records/assumptions for the project before inserting the new batch.
-- **Upload count display** — the UI now correctly reads `row_count` from the upload response (was reading a non-existent field, always showing 0).
-- **Model docs** — all references updated from `gemma4:e4b` to `phi4-mini` (the current production model).
+- **Cloud Solution Export** — 3-sheet IBM Cloud Cost Estimator workbook (Project Settings, Exceptions, Data Domains). Profiles x86 servers onto IBM VPC Flex instances. Eliminates the need for the `rvtools2vpc` web tool.
+- **IBM VPC profile selection** — Flex-Compute (`cxf`), Flex-Balanced (`bxf`), Flex-Memory (`mxf`) chosen automatically from CPU/RAM ratio.
+- **Full 22-sheet RVTools output** — all tabs required by VCF Migration Lite.
+- **Ollama timeout + retry + Python fallback synthesizer** — records never get permanently stuck.
+- **Per-project VPC region/zone** — 15 regions, all standard zones; stamped into every export row.
+- **PowerVS auto-detection** — AIX and IBM i OS designate records as `server_type = "powervs"` automatically.
+- **Server exclusion** — Exclude checkbox in Review table; optional reason stored in DB; Excluded Servers audit sheet in Assumptions Report.
+- **Reset stuck endpoint + UI button** — one-click recovery from stuck normalization without needing the terminal.
+- **VERSION file** — Single source of truth at repo root.

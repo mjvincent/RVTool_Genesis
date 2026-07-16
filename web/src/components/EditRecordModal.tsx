@@ -154,8 +154,8 @@ export default function EditRecordModal({ open, projectId, record, prefillFromRa
     try {
       const updated = await api.uploads.patchRecord(projectId, record.id, fields);
       onSaved(updated);
-    } catch {
-      setError('Failed to save changes. Please try again.');
+    } catch (err) {
+      setError(`Failed to save changes: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setSaving(false);
     }

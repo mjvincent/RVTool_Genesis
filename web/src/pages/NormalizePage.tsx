@@ -118,7 +118,7 @@ export default function NormalizePage() {
       startPolling();
       startHeartbeat();
     } catch {
-      setProcessError('Could not start normalization. Please try again.');
+      setProcessError(`Could not start normalization: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
       setProcessing(false);
     }
   }
@@ -142,8 +142,8 @@ export default function NormalizePage() {
       } else {
         setResetMsg('No stuck records found.');
       }
-    } catch {
-      setResetMsg('Reset failed — try again.');
+    } catch (err) {
+      setResetMsg(`Reset failed: ${(err as any)?.detail || (err as any)?.message || 'try again.'}`);
     }
   }
 

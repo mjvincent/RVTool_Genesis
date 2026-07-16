@@ -39,9 +39,9 @@ export default function NewProjectPage() {
         vpc_datacenter: vpcDc,
       });
       navigate(`/projects/${project.id}/upload`);
-    } catch {
+    } catch (err) {
       setLoading(false);
-      setError('Failed to create project. Please try again.');
+      setError(`Failed to create project: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     }
   }
 
