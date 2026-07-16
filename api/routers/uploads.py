@@ -464,3 +464,160 @@ async def bulk_os_replace(
         from_os=body.from_os,
         to_os=body.to_os,
     )
+
+
+# ---------------------------------------------------------------------------
+# nxf unsupported-profile count endpoint
+# ---------------------------------------------------------------------------
+
+# The three nxf profiles the Cloud Solutioning tool does NOT recognise
+# (absent from its Data Domains Compute Family VS column).
+_NXF_UNSUPPORTED = {"nxf-1x1", "nxf-1x2", "nxf-1x4"}
+
+# Target profile specs: (num_cpus, memory_mb)
+_NXF_TARGETS: dict[str, tuple[int, int]] = {
+    "nxf-2x1": (2, 1024),
+    "nxf-2x2": (2, 2048),
+}
+
+
+class NxfUnsupportedCountResponse(BaseModel):
+    unsupported_count: int
+
+
+class BulkNxfReplaceBody(BaseModel):
+    target_profile: str   # must be "nxf-2x1" or "nxf-2x2"
+
+
+class BulkNxfReplaceResponse(BaseModel):
+    updated_count: int
+    target_profile: str
+
+
+def _nxf_profile_for(cpus: int, mem_mb: int) -> str | None:
+    """Return the nxf profile name if (cpus, mem_mb) resolves to one, else None."""
+    from services.vpc_calculator_generator import _select_vpc_profile
+    mem_gb = max(1, round(mem_mb / 1024))
+    _cat, profile, _flag = _select_vpc_profile(cpus, mem_gb)
+    return profile if profile in _NXF_UNSUPPORTED else None
+
+
+@router.get(
+    "/projects/{project_id}/nxf-unsupported-count",
+    response_model=NxfUnsupportedCountResponse,
+)
+async def get_nxf_unsupported_count(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> NxfUnsupportedCountResponse:
+    """Return the number of active x86 records whose VPC profile would be an
+    unsupported nxf-1x* profile (not recognised by the IBM Cloud Solutioning tool)."""
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.is_excluded == False,  # noqa: E712
+        )
+    )
+    records = result.scalars().all()
+
+    count = 0
+    for record in records:
+        if not record.normalized_data:
+            continue
+        if record.server_type == "powervs":
+            continue
+        vinfo = record.normalized_data.get("vinfo") or {}
+        cpus   = int(vinfo.get("num_cpus") or vinfo.get("cpus") or 1)
+        mem_mb = int(vinfo.get("memory_mb") or vinfo.get("memory") or 4096)
+        if _nxf_profile_for(cpus, mem_mb):
+            count += 1
+
+    return NxfUnsupportedCountResponse(unsupported_count=count)
+
+
+@router.post(
+    "/projects/{project_id}/bulk-nxf-replace",
+    response_model=BulkNxfReplaceResponse,
+)
+async def bulk_nxf_replace(
+    project_id: uuid.UUID,
+    body: BulkNxfReplaceBody,
+    db: AsyncSession = Depends(get_db),
+) -> BulkNxfReplaceResponse:
+    """Replace all unsupported nxf-1x* profiles with a chosen supported target.
+
+    Patches num_cpus and memory_mb in normalized_data.vinfo so the next Cloud
+    Solutioning export picks up the new profile.  Inserts one Assumption row per
+    updated record documenting the change.
+    """
+    import copy
+    import uuid as _uuid
+    from datetime import datetime
+
+    if body.target_profile not in _NXF_TARGETS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"target_profile must be one of {sorted(_NXF_TARGETS)}",
+        )
+
+    target_cpus, target_mem_mb = _NXF_TARGETS[body.target_profile]
+
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ServerRecord).where(
+            ServerRecord.project_id == project_id,
+            ServerRecord.processing_status == "complete",
+            ServerRecord.is_excluded == False,  # noqa: E712
+        )
+    )
+    records = result.scalars().all()
+
+    updated_count = 0
+    for record in records:
+        if not record.normalized_data:
+            continue
+        if record.server_type == "powervs":
+            continue
+        vinfo = record.normalized_data.get("vinfo") or {}
+        cpus   = int(vinfo.get("num_cpus") or vinfo.get("cpus") or 1)
+        mem_mb = int(vinfo.get("memory_mb") or vinfo.get("memory") or 4096)
+        original_profile = _nxf_profile_for(cpus, mem_mb)
+        if not original_profile:
+            continue
+
+        updated = copy.deepcopy(record.normalized_data)
+        updated.setdefault("vinfo", {})["num_cpus"] = target_cpus
+        updated["vinfo"]["memory_mb"] = target_mem_mb
+        record.normalized_data = updated
+
+        assumption = Assumption(
+            id=_uuid.uuid4(),
+            server_record_id=record.id,
+            project_id=project_id,
+            field_name="vinfo/num_cpus+memory_mb",
+            assumed_value=body.target_profile,
+            original_value=original_profile,
+            reasoning=(
+                f"User-initiated bulk nxf profile upgrade: '{original_profile}' → "
+                f"'{body.target_profile}'. The Cloud Solutioning tool only recognises "
+                f"nxf-2x1 and nxf-2x2; nxf-1x* profiles are absent from its Data Domains."
+            ),
+            confidence="medium",
+            created_at=datetime.utcnow(),
+        )
+        db.add(assumption)
+        updated_count += 1
+
+    await db.commit()
+    logger.info(
+        "Bulk nxf replace: project %s — → '%s' (%d records updated)",
+        project_id, body.target_profile, updated_count,
+    )
+    return BulkNxfReplaceResponse(
+        updated_count=updated_count,
+        target_profile=body.target_profile,
+    )

@@ -232,6 +232,14 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from_os: fromOs, to_os: toOs }),
       }).then(r => r.json()),
+    getNxfUnsupportedCount: (projectId: string): Promise<{ unsupported_count: number }> =>
+      fetch(`${BASE}/projects/${projectId}/nxf-unsupported-count`).then(r => r.json()),
+    bulkNxfReplace: (projectId: string, targetProfile: string): Promise<{ updated_count: number; target_profile: string }> =>
+      fetch(`${BASE}/projects/${projectId}/bulk-nxf-replace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_profile: targetProfile }),
+      }).then(r => r.json()),
   },
   processing: {
     start: (projectId: string): Promise<{ status: string; record_count: number; message: string }> =>

@@ -8,6 +8,7 @@ import RecordsTable from '../components/RecordsTable';
 import AssumptionsPanel from '../components/AssumptionsPanel';
 import FailedRecordsPanel from '../components/FailedRecordsPanel';
 import BulkOSModal from '../components/BulkOSModal';
+import BulkNxfModal from '../components/BulkNxfModal';
 
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +27,10 @@ export default function ReviewPage() {
   const [bulkOsOpen, setBulkOsOpen] = useState(false);
   const [bulkOsSuccess, setBulkOsSuccess] = useState('');
 
+  const [nxfUnsupportedCount, setNxfUnsupportedCount] = useState(0);
+  const [bulkNxfOpen, setBulkNxfOpen]   = useState(false);
+  const [bulkNxfSuccess, setBulkNxfSuccess] = useState('');
+
   // ---------------------------------------------------------------------------
   // Load
   // ---------------------------------------------------------------------------
@@ -39,6 +44,15 @@ export default function ReviewPage() {
     }
   }, [projectId]);
 
+  const checkNxfCount = useCallback(async () => {
+    try {
+      const data = await api.uploads.getNxfUnsupportedCount(projectId);
+      setNxfUnsupportedCount(data.unsupported_count ?? 0);
+    } catch {
+      // non-critical — silently ignore
+    }
+  }, [projectId]);
+
   useEffect(() => {
     api.projects.get(projectId).then(setProject).catch(() => {});
     api.processing.getStatus(projectId).then(s => {
@@ -46,7 +60,8 @@ export default function ReviewPage() {
       setTableKey(k => k + 1);
     }).catch(() => {});
     loadRecords();
-  }, [projectId, loadRecords]);
+    checkNxfCount();
+  }, [projectId, loadRecords, checkNxfCount]);
 
   const isComplete = !!(status?.is_complete && status.total > 0);
 
@@ -81,8 +96,16 @@ export default function ReviewPage() {
   function handleBulkOsApplied(count: number, fromOs: string, toOs: string) {
     setBulkOsOpen(false);
     setBulkOsSuccess(`Replaced OS on ${count} record${count !== 1 ? 's' : ''}: "${fromOs}" → "${toOs}"`);
-    loadRecords();           // reload all records to reflect new OS values
-    setTableKey(k => k + 1); // force RecordsTable to re-fetch too
+    loadRecords();
+    setTableKey(k => k + 1);
+  }
+
+  function handleBulkNxfApplied(count: number, targetProfile: string) {
+    setBulkNxfOpen(false);
+    setBulkNxfSuccess(`Upgraded ${count} server${count !== 1 ? 's' : ''} to ${targetProfile}`);
+    loadRecords();
+    checkNxfCount();
+    setTableKey(k => k + 1);
   }
 
   // ---------------------------------------------------------------------------
@@ -110,16 +133,27 @@ export default function ReviewPage() {
               Inspect each record. Click a row to expand details. Click the AI decisions badge to review assumptions.
             </p>
           </div>
-          {normalRecords.length > 0 && (
-            <Button
-              kind="secondary"
-              renderIcon={Restart}
-              size="md"
-              onClick={() => { setBulkOsSuccess(''); setBulkOsOpen(true); }}
-            >
-              Bulk OS Replace
-            </Button>
-          )}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {normalRecords.length > 0 && (
+              <Button
+                kind="secondary"
+                renderIcon={Restart}
+                size="md"
+                onClick={() => { setBulkOsSuccess(''); setBulkOsOpen(true); }}
+              >
+                Bulk OS Replace
+              </Button>
+            )}
+            {isComplete && nxfUnsupportedCount > 0 && (
+              <Button
+                kind="danger--ghost"
+                size="md"
+                onClick={() => { setBulkNxfSuccess(''); setBulkNxfOpen(true); }}
+              >
+                ⚠ Fix Nano Profiles ({nxfUnsupportedCount})
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -144,6 +178,27 @@ export default function ReviewPage() {
             lowContrast
             style={{ marginBottom: '1.5rem' }}
             onCloseButtonClick={() => setBulkOsSuccess('')}
+          />
+        )}
+
+        {bulkNxfSuccess && (
+          <InlineNotification
+            kind="success"
+            title="Flex-Nano profiles upgraded"
+            subtitle={bulkNxfSuccess}
+            lowContrast
+            style={{ marginBottom: '1.5rem' }}
+            onCloseButtonClick={() => setBulkNxfSuccess('')}
+          />
+        )}
+
+        {isComplete && nxfUnsupportedCount > 0 && (
+          <InlineNotification
+            kind="warning"
+            title="Unsupported Flex-Nano profiles detected"
+            subtitle={`${nxfUnsupportedCount} server${nxfUnsupportedCount !== 1 ? 's are' : ' is'} assigned nxf-1x1, nxf-1x2, or nxf-1x4 — profiles the IBM Cloud Solutioning tool does not recognise. Use "Fix Nano Profiles" to upgrade them before exporting.`}
+            lowContrast
+            style={{ marginBottom: '1.5rem' }}
           />
         )}
 
@@ -199,6 +254,15 @@ export default function ReviewPage() {
           records={normalRecords}
           onClose={() => setBulkOsOpen(false)}
           onApplied={handleBulkOsApplied}
+        />
+      )}
+
+      {bulkNxfOpen && (
+        <BulkNxfModal
+          projectId={projectId}
+          unsupportedCount={nxfUnsupportedCount}
+          onClose={() => setBulkNxfOpen(false)}
+          onApplied={handleBulkNxfApplied}
         />
       )}
     </>
