@@ -141,6 +141,16 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
 
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
 
+  // Build a stable lookup map from ALL visible records so that the Carbon DataTable
+  // render callback (which may lag one render behind the paged slice) can always
+  // resolve a row.id → ServerRecord without returning undefined.  This fixes the
+  // blank-second-page bug: paged.find(r => r.id === row.id) returns undefined when
+  // Carbon's internal tableRows still references the previous page's IDs during the
+  // transition render, causing isMissingCpuOrRam(undefined) to crash the render.
+  const recordById = new Map<string, ServerRecord>(
+    visibleRecords.map(r => [r.id, r])
+  );
+
   const rows = paged.map(r => {
     const isFailed = r.processing_status === 'error' || r.status === 'error';
     const nd = r.normalized_data ?? {};
@@ -250,7 +260,8 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
 
               <TableBody>
                 {tableRows.map((row: any) => {
-                  const original = paged.find(r => r.id === row.id)!;
+                  const original = recordById.get(row.id) ?? paged.find(r => r.id === row.id);
+                  if (!original) return null; // guard against stale Carbon render during page transition
                   const nd = original?.normalized_data ?? {};
                   const isFailed = (original?.processing_status === 'error' || original?.status === 'error');
                   const isRetrying = retrying.has(row.id);
