@@ -63,6 +63,7 @@ export interface ProcessingStatus {
   complete: number;
   error: number;
   is_complete: boolean;
+  current_record_name?: string | null;
 }
 
 export interface ServerRecord {
@@ -241,7 +242,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from_os: fromOs, to_os: toOs }),
       }).then(r => r.json()),
-    getNxfUnsupportedCount: (projectId: string): Promise<{ unsupported_count: number }> =>
+    getNxfUnsupportedCount: (projectId: string): Promise<{ unsupported_count: number; preview_names: string[] }> =>
       fetch(`${BASE}/projects/${projectId}/nxf-unsupported-count`).then(r => r.json()),
     bulkNxfReplace: (projectId: string, targetProfile: string): Promise<{ updated_count: number; target_profile: string }> =>
       fetch(`${BASE}/projects/${projectId}/bulk-nxf-replace`, {

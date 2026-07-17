@@ -26,6 +26,8 @@ export default function NormalizePage() {
   const lastCompleteRef               = useRef<number>(0);
   const heartbeatRef                  = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollIntervalRef               = useRef<number>(2000);
+  const pollFailuresRef               = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +67,10 @@ export default function NormalizePage() {
       cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+      pollIntervalRef.current = 2000;
+      pollFailuresRef.current = 0;
+      setProcessError('');
+      setResetMsg('');
     };
   }, [projectId]);
 
@@ -86,11 +92,19 @@ export default function NormalizePage() {
     }, 1000);
   }
 
-  function startPolling() {
+  function startPolling(interval = pollIntervalRef.current) {
     if (pollRef.current) clearInterval(pollRef.current);
+    pollIntervalRef.current = interval;
     pollRef.current = setInterval(async () => {
       try {
         const s = await api.processing.getStatus(projectId);
+        // Successful response — reset backoff
+        pollFailuresRef.current = 0;
+        if (pollIntervalRef.current > 2000) {
+          // Restart at normal speed
+          startPolling(2000);
+          return;
+        }
         setStatus(s);
         // Reset heartbeat counter whenever a new record completes
         if (s.complete > lastCompleteRef.current) {
@@ -104,8 +118,15 @@ export default function NormalizePage() {
           setProcessing(false);
           setHeartbeat(0);
         }
-      } catch { /* keep polling */ }
-    }, 2000);
+      } catch {
+        pollFailuresRef.current += 1;
+        if (pollFailuresRef.current >= 3) {
+          // Back off: double interval, cap at 30s
+          const next = Math.min(pollIntervalRef.current * 2, 30000);
+          startPolling(next);
+        }
+      }
+    }, interval);
   }
 
   async function handleProcess() {
@@ -270,7 +291,11 @@ export default function NormalizePage() {
                   <span>Processing record {(status?.complete ?? 0) + 1} of {status?.total ?? recordCount} — {fmtElapsed(heartbeat)} elapsed on this record…</span>
                 )}
               </div>
-
+              {status?.current_record_name && (
+                <div style={{ marginTop: '0.25rem', fontSize: '0.8125rem', color: '#6f6f6f', paddingLeft: '1.375rem' }}>
+                  Currently processing: <strong>{status.current_record_name}</strong>
+                </div>
+              )}
               {/* Reset stuck button — shown after 90 s on same record */}
               {isStuck && (
                 <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Modal, Select, SelectItem, InlineNotification } from '@carbon/react';
+import { Modal, Select, SelectItem, InlineNotification, Accordion, AccordionItem } from '@carbon/react';
 import { api } from '../api/client';
 
 interface Props {
   projectId: string;
   unsupportedCount: number;
+  previewNames?: string[];
   onClose: () => void;
   onApplied: (updatedCount: number, targetProfile: string) => void;
 }
@@ -71,10 +72,25 @@ export default function BulkNxfModal({ projectId, unsupportedCount, onClose, onA
         ))}
       </Select>
 
-      <p style={{ fontSize: '0.8125rem', color: '#0043ce', background: '#edf5ff', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
+      <p style={{ fontSize: '0.8125rem', color: '#0043ce', background: '#edf5ff', padding: '0.5rem 0.75rem', borderRadius: 4, marginBottom: previewNames && previewNames.length > 0 ? '0.75rem' : 0 }}>
         <strong>{unsupportedCount} server{unsupportedCount !== 1 ? 's' : ''}</strong>{' '}
         will be updated: <strong>nxf-1x*</strong> → <strong>{targetProfile}</strong>.
       </p>
+
+      {previewNames && previewNames.length > 0 && (
+        <Accordion>
+          <AccordionItem title={`Show ${unsupportedCount} affected server${unsupportedCount !== 1 ? 's' : ''}`}>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.8125rem', lineHeight: 1.8 }}>
+              {previewNames.map(name => <li key={name}>{name}</li>)}
+            </ul>
+            {unsupportedCount > previewNames.length && (
+              <p style={{ fontSize: '0.8125rem', color: '#6f6f6f', marginTop: '0.5rem' }}>
+                …and {unsupportedCount - previewNames.length} more
+              </p>
+            )}
+          </AccordionItem>
+        </Accordion>
+      )}
     </Modal>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Modal, Select, SelectItem, TextInput, InlineNotification } from '@carbon/react';
+import { Modal, Select, SelectItem, TextInput, InlineNotification, Accordion, AccordionItem } from '@carbon/react';
 import { api, ServerRecord } from '../api/client';
 import { shortOsLabel } from '../constants/osOptions';
 
@@ -34,16 +34,20 @@ export default function BulkExcludeModal({ projectId, records, onClose, onApplie
     return Array.from(seen).sort();
   }, [records]);
 
-  // Live preview count of matching records
-  const affectedCount = useMemo(() => {
-    if (!filterValue.trim()) return 0;
-    return records.filter(r => {
+  // Live preview count and names of matching records
+  const { affectedCount, previewNames } = useMemo(() => {
+    if (!filterValue.trim()) return { affectedCount: 0, previewNames: [] };
+    const matched = records.filter(r => {
       if (!r.normalized_data) return false;
       if (filterType === 'name') {
         return getName(r).toLowerCase().includes(filterValue.trim().toLowerCase());
       }
       return getOs(r) === filterValue;
-    }).length;
+    });
+    return {
+      affectedCount: matched.length,
+      previewNames: matched.slice(0, 10).map(r => getName(r) || String(r.id)),
+    };
   }, [records, filterType, filterValue]);
 
   async function handleApply() {
@@ -133,17 +137,34 @@ export default function BulkExcludeModal({ projectId, records, onClose, onApplie
 
       {/* Live preview */}
       {filterValue.trim().length > 0 && (
-        <p style={{
-          fontSize: '0.8125rem',
-          color: affectedCount > 0 ? '#0043ce' : '#6f6f6f',
-          background: affectedCount > 0 ? '#edf5ff' : '#f4f4f4',
-          padding: '0.5rem 0.75rem',
-          borderRadius: 4,
-        }}>
-          {affectedCount > 0
-            ? <>Will exclude <strong>{affectedCount} record{affectedCount !== 1 ? 's' : ''}</strong> matching "{filterValue.trim()}".</>
-            : <>No active records match "{filterValue.trim()}".</>}
-        </p>
+        <>
+          <p style={{
+            fontSize: '0.8125rem',
+            color: affectedCount > 0 ? '#0043ce' : '#6f6f6f',
+            background: affectedCount > 0 ? '#edf5ff' : '#f4f4f4',
+            padding: '0.5rem 0.75rem',
+            borderRadius: 4,
+            marginBottom: affectedCount > 0 ? '0.75rem' : 0,
+          }}>
+            {affectedCount > 0
+              ? <>Will exclude <strong>{affectedCount} record{affectedCount !== 1 ? 's' : ''}</strong> matching "{filterValue.trim()}".</>
+              : <>No active records match "{filterValue.trim()}".</>}
+          </p>
+          {affectedCount > 0 && (
+            <Accordion>
+              <AccordionItem title={`Show ${affectedCount} affected server${affectedCount !== 1 ? 's' : ''}`}>
+                <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.8125rem', lineHeight: 1.8 }}>
+                  {previewNames.map(name => <li key={name}>{name}</li>)}
+                </ul>
+                {affectedCount > previewNames.length && (
+                  <p style={{ fontSize: '0.8125rem', color: '#6f6f6f', marginTop: '0.5rem' }}>
+                    …and {affectedCount - previewNames.length} more
+                  </p>
+                )}
+              </AccordionItem>
+            </Accordion>
+          )}
+        </>
       )}
     </Modal>
   );

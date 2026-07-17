@@ -38,6 +38,7 @@ class ProcessingStatusResponse(BaseModel):
     complete: int
     error: int
     is_complete: bool
+    current_record_name: str | None = None
 
 
 class AssumptionResponse(BaseModel):
@@ -224,6 +225,25 @@ async def get_processing_status(
     complete = counts.get("complete", 0)
     error = counts.get("error", 0)
 
+    # Best-effort: find the VM name of the record currently being processed
+    current_record_name: str | None = None
+    if processing > 0:
+        in_flight = await db.execute(
+            select(ServerRecord)
+            .where(
+                ServerRecord.project_id == project_id,
+                ServerRecord.processing_status == "processing",
+            )
+            .limit(1)
+        )
+        in_flight_record = in_flight.scalar_one_or_none()
+        if in_flight_record:
+            vinfo = (in_flight_record.normalized_data or {}).get("vinfo") or {}
+            raw   = (in_flight_record.raw_data or {}).get("Name") \
+                    or (in_flight_record.raw_data or {}).get("VM") \
+                    or (in_flight_record.raw_data or {}).get("name")
+            current_record_name = vinfo.get("vm_name") or raw or str(in_flight_record.id)
+
     return ProcessingStatusResponse(
         total=total,
         pending=pending,
@@ -231,6 +251,7 @@ async def get_processing_status(
         complete=complete,
         error=error,
         is_complete=(total > 0 and pending == 0 and processing == 0),
+        current_record_name=current_record_name,
     )
 
 

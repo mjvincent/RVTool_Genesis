@@ -483,6 +483,7 @@ _NXF_TARGETS: dict[str, tuple[int, int]] = {
 
 class NxfUnsupportedCountResponse(BaseModel):
     unsupported_count: int
+    preview_names: list[str] = []
 
 
 class BulkNxfReplaceBody(BaseModel):
@@ -524,6 +525,7 @@ async def get_nxf_unsupported_count(
     records = result.scalars().all()
 
     count = 0
+    preview_names: list[str] = []
     for record in records:
         if not record.normalized_data:
             continue
@@ -534,8 +536,15 @@ async def get_nxf_unsupported_count(
         mem_mb = int(vinfo.get("memory_mb") or vinfo.get("memory") or 4096)
         if _nxf_profile_for(cpus, mem_mb):
             count += 1
+            if len(preview_names) < 10:
+                preview_names.append(
+                    vinfo.get("vm_name") or str(record.id)
+                )
 
-    return NxfUnsupportedCountResponse(unsupported_count=count)
+    return NxfUnsupportedCountResponse(
+        unsupported_count=count,
+        preview_names=preview_names,
+    )
 
 
 @router.post(

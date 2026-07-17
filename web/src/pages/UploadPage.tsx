@@ -24,6 +24,7 @@ export default function UploadPage() {
       const count = data.records?.length ?? 0;
       if (count > 0) setExistingCount(count);
     }).catch(() => {});
+    return () => { setUploadError(''); };
   }, [projectId]);
 
   function handleDrop(e: React.DragEvent) {

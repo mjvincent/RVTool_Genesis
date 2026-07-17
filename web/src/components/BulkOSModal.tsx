@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Modal, Select, SelectItem, InlineNotification } from '@carbon/react';
+import { Modal, Select, SelectItem, InlineNotification, Accordion, AccordionItem } from '@carbon/react';
 import { api, ServerRecord } from '../api/client';
 import { IBM_OS_OPTIONS, shortOsLabel } from '../constants/osOptions';
 
@@ -30,11 +30,14 @@ export default function BulkOSModal({ projectId, records, onClose, onApplied }: 
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
 
-  // Count how many records would be affected
-  const affectedCount = useMemo(
-    () => records.filter(r => getOs(r) === fromOs && !r.is_excluded).length,
-    [records, fromOs]
-  );
+  // Count and preview names for affected records
+  const { affectedCount, previewNames } = useMemo(() => {
+    const matched = records.filter(r => getOs(r) === fromOs && !r.is_excluded);
+    return {
+      affectedCount: matched.length,
+      previewNames: matched.slice(0, 10).map(r => r.normalized_data?.vinfo?.vm_name ?? String(r.id)),
+    };
+  }, [records, fromOs]);
 
   async function handleApply() {
     if (!fromOs || !toOs || fromOs === toOs) return;
@@ -112,10 +115,24 @@ export default function BulkOSModal({ projectId, records, onClose, onApplied }: 
       </div>
 
       {affectedCount > 0 && fromOs !== toOs && (
-        <p style={{ fontSize: '0.8125rem', color: '#0043ce', background: '#edf5ff', padding: '0.5rem 0.75rem', borderRadius: 4 }}>
-          This will update <strong>{affectedCount} record{affectedCount !== 1 ? 's' : ''}</strong> from{' '}
-          <strong>{shortOsLabel(fromOs)}</strong> → <strong>{shortOsLabel(toOs)}</strong>.
-        </p>
+        <>
+          <p style={{ fontSize: '0.8125rem', color: '#0043ce', background: '#edf5ff', padding: '0.5rem 0.75rem', borderRadius: 4, marginBottom: '0.75rem' }}>
+            This will update <strong>{affectedCount} record{affectedCount !== 1 ? 's' : ''}</strong> from{' '}
+            <strong>{shortOsLabel(fromOs)}</strong> → <strong>{shortOsLabel(toOs)}</strong>.
+          </p>
+          <Accordion>
+            <AccordionItem title={`Show ${affectedCount} affected server${affectedCount !== 1 ? 's' : ''}`}>
+              <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.8125rem', lineHeight: 1.8 }}>
+                {previewNames.map(name => <li key={name}>{name}</li>)}
+              </ul>
+              {affectedCount > previewNames.length && (
+                <p style={{ fontSize: '0.8125rem', color: '#6f6f6f', marginTop: '0.5rem' }}>
+                  …and {affectedCount - previewNames.length} more
+                </p>
+              )}
+            </AccordionItem>
+          </Accordion>
+        </>
       )}
       {fromOs === toOs && (
         <p style={{ fontSize: '0.8125rem', color: '#6f6f6f' }}>Source and target OS are the same — nothing to change.</p>

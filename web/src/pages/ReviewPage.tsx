@@ -29,6 +29,7 @@ export default function ReviewPage() {
   const [bulkOsSuccess, setBulkOsSuccess] = useState('');
 
   const [nxfUnsupportedCount, setNxfUnsupportedCount] = useState(0);
+  const [nxfPreviewNames, setNxfPreviewNames]         = useState<string[]>([]);
   const [bulkNxfOpen, setBulkNxfOpen]   = useState(false);
   const [bulkNxfSuccess, setBulkNxfSuccess] = useState('');
 
@@ -52,6 +53,7 @@ export default function ReviewPage() {
     try {
       const data = await api.uploads.getNxfUnsupportedCount(projectId);
       setNxfUnsupportedCount(data.unsupported_count ?? 0);
+      setNxfPreviewNames(data.preview_names ?? []);
     } catch {
       // non-critical — silently ignore
     }
@@ -65,6 +67,11 @@ export default function ReviewPage() {
     }).catch(() => {});
     loadRecords();
     checkNxfCount();
+    return () => {
+      setBulkOsSuccess('');
+      setBulkNxfSuccess('');
+      setBulkExcludeSuccess('');
+    };
   }, [projectId, loadRecords, checkNxfCount]);
 
   const isComplete = !!(status?.is_complete && status.total > 0);
@@ -245,6 +252,15 @@ export default function ReviewPage() {
 
         {recordsLoading ? (
           <InlineLoading description="Loading records…" style={{ marginBottom: '1rem' }} />
+        ) : status !== null && status.total === 0 ? (
+          <InlineNotification
+            kind="info"
+            title="No records to review yet"
+            subtitle="Upload an RVTools file and run the Normalize step first."
+            lowContrast
+            hideCloseButton
+            style={{ marginBottom: '1rem' }}
+          />
         ) : (
           <RecordsTable
             key={tableKey}
@@ -292,6 +308,7 @@ export default function ReviewPage() {
         <BulkNxfModal
           projectId={projectId}
           unsupportedCount={nxfUnsupportedCount}
+          previewNames={nxfPreviewNames}
           onClose={() => setBulkNxfOpen(false)}
           onApplied={handleBulkNxfApplied}
         />
