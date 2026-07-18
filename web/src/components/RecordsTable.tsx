@@ -488,6 +488,14 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
                               ))}
                             </div>
 
+                            {/* Notes — shown when set */}
+                            {original?.notes && (
+                              <div style={{ padding: '0.5rem 1.25rem', borderTop: '1px solid #e0e0e0', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#525252', minWidth: 60, paddingTop: 2 }}>Notes</span>
+                                <span style={{ fontSize: '0.8125rem', color: '#161616', whiteSpace: 'pre-wrap' }}>{original.notes}</span>
+                              </div>
+                            )}
+
                             {/* Exclusion reason input — visible only when row is excluded */}
                             {isExcluded && (
                               <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #e0e0e0', background: '#f9f3ff' }}>

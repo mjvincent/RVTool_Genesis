@@ -90,15 +90,28 @@ async def _process_single_record(record_id: uuid.UUID, project_id: uuid.UUID) ->
             )
 
             # Persist normalized data on the record
+            vinfo = normalized.get("vinfo") or {}
             record.normalized_data = {
-                "vinfo": normalized.get("vinfo", {}),
+                "vinfo": vinfo,
                 "vnetwork": normalized.get("vnetwork", []),
                 "vpartition": normalized.get("vpartition", []),
                 "vhost": normalized.get("vhost", {}),
             }
             record.server_type = normalized.get("server_type")
-            record.processing_status = "complete"
-            record.error_message = None
+
+            # Sub-Task F: validate that LLM returned meaningful vinfo content.
+            # An empty vinfo ({}) or one missing all three anchor fields produces
+            # blank export rows — mark as error so the user can fix it manually.
+            _anchor_fields = ("vm_name", "num_cpus", "cpus", "memory_mb", "memory")
+            if not vinfo or not any(vinfo.get(f) for f in _anchor_fields):
+                record.processing_status = "error"
+                record.error_message = (
+                    "AI response missing required fields (vm_name, cpus, memory_mb). "
+                    "Use Edit & fix to complete this record manually."
+                )
+            else:
+                record.processing_status = "complete"
+                record.error_message = None
 
             # Persist assumption rows (delete any stale ones first)
             stale = await db.execute(

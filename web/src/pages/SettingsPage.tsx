@@ -10,7 +10,7 @@ import {
   Tag,
 } from '@carbon/react';
 import { Settings as SettingsIcon } from '@carbon/icons-react';
-import { api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation } from '../api/client';
+import { api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation, LocalAdvisorResponse } from '../api/client';
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -68,6 +68,11 @@ export default function SettingsPage() {
   const [previousModel, setPreviousModel] = useState<string | null>(null);
   const [recLoading, setRecLoading] = useState(false);
 
+  // Local Advisor state (Sub-Task A)
+  const [advisor, setAdvisor] = useState<LocalAdvisorResponse | null>(null);
+  const [advisorLoading, setAdvisorLoading] = useState(false);
+  const [advisorError, setAdvisorError] = useState('');
+
   // UI state
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -100,8 +105,25 @@ export default function SettingsPage() {
       applySettingsToState(s);
       setRecommendation(rec.recommendation);
       setLoaded(true);
+      // Fire local advisor when Ollama is the active provider
+      if (s.provider === 'ollama') {
+        loadAdvisor(false);
+      }
     }).catch(() => setLoaded(true));
   }, []);
+
+  async function loadAdvisor(refresh: boolean) {
+    setAdvisorLoading(true);
+    setAdvisorError('');
+    try {
+      const data = await api.settings.getLocalAdvisor(refresh);
+      setAdvisor(data);
+    } catch {
+      setAdvisorError('Could not reach the advisor endpoint.');
+    } finally {
+      setAdvisorLoading(false);
+    }
+  }
 
   // ── recommendation handlers ────────────────────────────────────────────────
   async function handleApplyRecommendation() {
@@ -327,6 +349,80 @@ export default function SettingsPage() {
               placeholder={DEFAULTS.ollama_model}
               helperText="Any model pulled in Ollama (e.g. phi4-mini, llama3.2, mistral)"
             />
+          </section>
+        )}
+
+        {/* ── Local AI Advisor card (Sub-Task A) ───────────────────── */}
+        {provider === 'ollama' && (
+          <section style={{ marginBottom: '1.5rem', border: '1px solid #d0e2ff', borderRadius: 4, background: '#f0f4ff', padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <h2 style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#0043ce', margin: 0 }}>
+                Local AI Advisor
+              </h2>
+              <button
+                onClick={() => loadAdvisor(true)}
+                disabled={advisorLoading}
+                style={{ fontSize: '0.8125rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+              >
+                ↻ Refresh
+              </button>
+            </div>
+
+            {advisorLoading && <InlineLoading description="Checking Ollama…" />}
+
+            {advisorError && !advisorLoading && (
+              <p style={{ fontSize: '0.8125rem', color: '#da1e28', margin: 0 }}>{advisorError}</p>
+            )}
+
+            {advisor && !advisorLoading && (
+              <>
+                {/* Hardware summary */}
+                <p style={{ fontSize: '0.8125rem', color: '#161616', margin: '0 0 0.75rem', lineHeight: 1.6 }}>
+                  <strong>CPU:</strong> {advisor.cpu_model} ({advisor.cpu_arch})
+                  {' · '}<strong>RAM:</strong> {advisor.ram_gb} GB
+                  {' · '}<strong>Ollama:</strong>{' '}
+                  {advisor.ollama_reachable
+                    ? <span style={{ color: '#198038' }}>reachable</span>
+                    : <span style={{ color: '#da1e28' }}>unreachable — is Ollama running?</span>}
+                </p>
+
+                {/* Installed models list */}
+                {advisor.installed_models.length === 0 ? (
+                  <p style={{ fontSize: '0.8125rem', color: '#525252', margin: '0 0 0.5rem' }}>
+                    No models installed. Run <code>ollama pull phi4-mini</code> to get started.
+                  </p>
+                ) : (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#525252', margin: '0 0 0.35rem' }}>INSTALLED MODELS</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                      {advisor.installed_models.map(m => (
+                        <div key={m.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                          <code style={{ color: m.recommended ? '#0043ce' : '#161616', fontWeight: m.recommended ? 700 : 400 }}>{m.name}</code>
+                          <span style={{ color: '#6f6f6f' }}>{m.size_gb} GB</span>
+                          {m.recommended && <span style={{ background: '#0043ce', color: '#fff', fontSize: '0.6875rem', padding: '0.1rem 0.4rem', borderRadius: 3 }}>BEST FIT</span>}
+                          {!m.fits_in_ram && <span style={{ color: '#da1e28', fontSize: '0.75rem' }}>⚠ may not fit in RAM</span>}
+                          {advisor.current_model && m.name.startsWith(advisor.current_model.split(':')[0]) && m.name === advisor.current_model && (
+                            <span style={{ color: '#6f6f6f', fontSize: '0.75rem' }}>← active</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Pull suggestion */}
+                {advisor.pull_suggestion && (
+                  <div style={{ background: '#fff', border: '1px solid #d0e2ff', borderRadius: 4, padding: '0.625rem 0.875rem', marginTop: '0.5rem' }}>
+                    <p style={{ fontSize: '0.8125rem', margin: 0, color: '#0043ce' }}>
+                      <strong>Suggestion:</strong> Pull <code>{advisor.pull_suggestion.model}</code> ({advisor.pull_suggestion.label}) for better structured-JSON extraction accuracy.
+                    </p>
+                    <code style={{ fontSize: '0.8125rem', color: '#161616', display: 'block', marginTop: '0.25rem' }}>
+                      ollama pull {advisor.pull_suggestion.model}
+                    </code>
+                  </div>
+                )}
+              </>
+            )}
           </section>
         )}
 

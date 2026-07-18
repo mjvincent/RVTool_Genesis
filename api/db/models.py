@@ -130,6 +130,8 @@ class ServerRecord(Base):
     # Exclusion — user-controlled, survives page refresh
     is_excluded: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     exclusion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Practitioner annotations — free-text notes that don't fit the assumption system
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 

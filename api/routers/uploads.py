@@ -289,17 +289,23 @@ async def patch_record(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Record {record_id} not found")
 
-    # Accept top-level vinfo overrides
+    # Extract top-level fields that live directly on the record (not vinfo)
+    if "notes" in body:
+        record.notes = body.pop("notes") or None  # empty string → NULL
+
+    # Accept top-level vinfo overrides (remaining body keys)
     vinfo_overrides = body.get("vinfo", body)  # support both {"vinfo": {...}} and flat dict
     if not isinstance(vinfo_overrides, dict):
         raise HTTPException(status_code=422, detail="Body must be a JSON object")
 
-    # For failed records with no normalized_data, bootstrap a minimal structure
-    base = copy.deepcopy(record.normalized_data) if record.normalized_data else {
-        "vinfo": {}, "vnetwork": [], "vpartition": [], "vhost": {}
-    }
-    base.setdefault("vinfo", {}).update(vinfo_overrides)
-    record.normalized_data = base
+    # Only update normalized_data if there are vinfo fields to merge
+    if vinfo_overrides:
+        # For failed records with no normalized_data, bootstrap a minimal structure
+        base = copy.deepcopy(record.normalized_data) if record.normalized_data else {
+            "vinfo": {}, "vnetwork": [], "vpartition": [], "vhost": {}
+        }
+        base.setdefault("vinfo", {}).update(vinfo_overrides)
+        record.normalized_data = base
 
     # If this was a failed record, promote it to complete on manual save
     if record.processing_status == "error":
@@ -454,6 +460,14 @@ async def bulk_os_replace(
         db.add(assumption)
         updated_count += 1
 
+    if updated_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"No active records have OS '{body.from_os}'. "
+                "Check the OS value and try again."
+            ),
+        )
     await db.commit()
     logger.info(
         "Bulk OS replace: project %s — '%s' → '%s' (%d records updated)",
@@ -621,6 +635,11 @@ async def bulk_nxf_replace(
         db.add(assumption)
         updated_count += 1
 
+    if updated_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No active records have unsupported nxf-1x* profiles to replace.",
+        )
     await db.commit()
     logger.info(
         "Bulk nxf replace: project %s — → '%s' (%d records updated)",
@@ -717,6 +736,14 @@ async def bulk_exclude(
         db.add(assumption)
         updated_count += 1
 
+    if updated_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"No active records matched the filter "
+                f"({body.filter_type}='{filter_value}'). Check the value and try again."
+            ),
+        )
     await db.commit()
     logger.info(
         "Bulk exclude: project %s — filter_type=%s value=%r (%d records excluded)",

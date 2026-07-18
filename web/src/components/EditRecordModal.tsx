@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Modal, TextInput, NumberInput, Select, SelectItem, InlineNotification, InlineLoading } from '@carbon/react';
+import { Modal, TextInput, TextArea, NumberInput, Select, SelectItem, InlineNotification, InlineLoading } from '@carbon/react';
 import { ChevronDown, ChevronUp } from '@carbon/icons-react';
 import { api, ServerRecord } from '../api/client';
 import { IBM_OS_OPTIONS } from '../constants/osOptions';
@@ -123,7 +123,10 @@ function getWarning(field: VinfoField, val: any): FieldSeverity | null {
 // ---------------------------------------------------------------------------
 export default function EditRecordModal({ open, projectId, record, prefillFromRaw = false, onClose, onSaved }: Props) {
   const [fields, setFields]           = useState<Record<string, any>>({});
+  const [notes, setNotes]             = useState('');
   const [saving, setSaving]           = useState(false);
+  const [renormalizing, setRenormalizing] = useState(false);
+  const [renormalizeConfirm, setRenormalizeConfirm] = useState(false);
   const [error, setError]             = useState('');
   const [rawPanelOpen, setRawPanelOpen] = useState(false);
 
@@ -133,6 +136,7 @@ export default function EditRecordModal({ open, projectId, record, prefillFromRa
   useEffect(() => {
     if (open) {
       setError('');
+      setNotes(record.notes ?? '');
       if (!hasNormalized && prefillFromRaw) {
         // Failed record — pre-populate from raw_data
         setFields(prefillFromRawData(record.raw_data ?? {}));
@@ -148,11 +152,29 @@ export default function EditRecordModal({ open, projectId, record, prefillFromRa
     setFields(prev => ({ ...prev, [key]: value }));
   }
 
+  async function handleRenormalize() {
+    if (!renormalizeConfirm) {
+      setRenormalizeConfirm(true);
+      return;
+    }
+    setRenormalizing(true);
+    setError('');
+    try {
+      await api.processing.retryRecord(projectId, record.id);
+      onClose();
+    } catch (err) {
+      setError(`Re-normalize failed: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
+    } finally {
+      setRenormalizing(false);
+      setRenormalizeConfirm(false);
+    }
+  }
+
   async function handleSave() {
     setSaving(true);
     setError('');
     try {
-      const updated = await api.uploads.patchRecord(projectId, record.id, fields);
+      const updated = await api.uploads.patchRecord(projectId, record.id, { ...fields, notes });
       onSaved(updated);
     } catch (err) {
       setError(`Failed to save changes: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
@@ -331,6 +353,19 @@ export default function EditRecordModal({ open, projectId, record, prefillFromRa
         })}
       </div>
 
+      {/* ── Notes field ──────────────────────────────────────────────── */}
+      <div style={{ marginTop: '1.5rem', borderTop: '1px solid #e0e0e0', paddingTop: '1rem' }}>
+        <TextArea
+          id="edit-notes"
+          labelText="Notes (optional)"
+          helperText="Practitioner annotations — e.g. 'confirmed decommissioned', 'dependency on server X'. Not exported to IBM pricing tools."
+          value={notes}
+          rows={2}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNotes(e.target.value)}
+          style={{ resize: 'vertical' }}
+        />
+      </div>
+
       {/* ── Original spreadsheet data panel ──────────────────────────── */}
       {rawEntries.length > 0 && (
         <div style={{ marginTop: '1.5rem', borderTop: '1px solid #e0e0e0', paddingTop: '1rem' }}>
@@ -390,6 +425,40 @@ export default function EditRecordModal({ open, projectId, record, prefillFromRa
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Re-normalize button ───────────────────────────────────────── */}
+      {hasNormalized && (
+        <div style={{ marginTop: '1.5rem', borderTop: '1px solid #e0e0e0', paddingTop: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          {renormalizeConfirm ? (
+            <>
+              <p style={{ fontSize: '0.8125rem', color: '#da1e28', margin: 0, flex: 1 }}>
+                This will discard all normalized data and assumptions for this record and re-run AI normalization. Continue?
+              </p>
+              <button
+                onClick={handleRenormalize}
+                disabled={renormalizing}
+                style={{ fontSize: '0.8125rem', color: '#da1e28', background: 'none', border: '1px solid #da1e28', borderRadius: 4, padding: '0.25rem 0.75rem', cursor: 'pointer', fontWeight: 600 }}
+              >
+                {renormalizing ? 'Starting…' : 'Yes, re-normalize'}
+              </button>
+              <button
+                onClick={() => setRenormalizeConfirm(false)}
+                style={{ fontSize: '0.8125rem', color: '#525252', background: 'none', border: 'none', padding: '0.25rem 0.5rem', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleRenormalize}
+              disabled={renormalizing}
+              style={{ fontSize: '0.8125rem', color: '#525252', background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              Re-normalize this record with AI
+            </button>
           )}
         </div>
       )}

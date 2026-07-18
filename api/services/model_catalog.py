@@ -4,9 +4,6 @@ Maintains a static, hand-curated list of known upgrade paths per provider.
 A recommendation is ONLY issued when the catalog has an explicit entry for the
 user's current model — no heuristics, no guessing, no false positives.
 
-Ollama is always skipped: local models are user-managed and the set of available
-models depends on what the user has pulled — we cannot know what is "better".
-
 To update the catalog:
   1. Add new models to CATALOG[provider] (insert at the top — newest first).
   2. Add an entry to SUCCESSOR_MAP[provider][old_model] = new_model if there is
@@ -15,7 +12,11 @@ To update the catalog:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -173,3 +174,146 @@ def get_recommendation(provider: str, current_model: str | None) -> ModelRecomme
 def get_catalog_models(provider: str) -> list[ModelEntry]:
     """Return the ordered model list for a provider (newest first)."""
     return CATALOG.get(provider, [])
+
+
+# ---------------------------------------------------------------------------
+# Local Ollama model ranking (Sub-Task A — Local LLM Advisor)
+# ---------------------------------------------------------------------------
+
+# Task-fit score: how well each Ollama model handles structured JSON extraction.
+# Higher = better. Models not listed default to 1.
+_OLLAMA_TASK_FIT: dict[str, int] = {
+    "phi4":           10,
+    "phi4-mini":       9,
+    "qwen2.5":         9,
+    "qwen2.5:7b":      9,
+    "qwen2.5:14b":    10,
+    "qwen2.5:32b":    10,
+    "llama3.1":        7,
+    "llama3.2":        7,
+    "llama3.3":        8,
+    "mistral":         7,
+    "mistral-nemo":    8,
+    "gemma2":          6,
+    "gemma3":          7,
+}
+
+# Approximate RAM required (GB) per model family+size.
+# Used to flag models that won't fit in available RAM.
+_OLLAMA_RAM_GB: dict[str, float] = {
+    "phi4-mini":        4.0,
+    "phi4":             8.0,
+    "llama3.2":         3.0,
+    "llama3.1":         5.0,
+    "llama3.3":        12.0,
+    "qwen2.5:3b":       3.0,
+    "qwen2.5:7b":       5.0,
+    "qwen2.5:14b":     10.0,
+    "qwen2.5:32b":     22.0,
+    "mistral":          5.0,
+    "mistral-nemo":     8.0,
+    "gemma2":           6.0,
+    "gemma3":           6.0,
+}
+
+# Models we suggest pulling if none installed are a good fit
+_PULL_SUGGESTIONS = [
+    {"model": "phi4-mini",   "label": "Phi-4 Mini (4 GB RAM)",    "min_ram_gb": 4},
+    {"model": "phi4",        "label": "Phi-4 (8 GB RAM)",         "min_ram_gb": 8},
+    {"model": "qwen2.5:7b",  "label": "Qwen 2.5 7B (5 GB RAM)",  "min_ram_gb": 5},
+    {"model": "qwen2.5:14b", "label": "Qwen 2.5 14B (10 GB RAM)", "min_ram_gb": 10},
+]
+
+
+@dataclass
+class RankedModel:
+    """An installed Ollama model with advisor scoring."""
+    name: str
+    size_gb: float
+    fits_in_ram: bool
+    task_fit: int        # 1–10; higher = better for structured extraction
+    recommended: bool    # True for the top-ranked model that fits in RAM
+    pull_suggestion: str | None = None  # Non-None means: suggest pulling this instead
+
+
+def _base_name(model_name: str) -> str:
+    """Strip the tag from an Ollama model name for lookup (e.g. 'phi4-mini:latest' → 'phi4-mini')."""
+    return model_name.split(":")[0].lower()
+
+
+def rank_local_models(
+    installed: list[dict[str, Any]],
+    ram_gb: float,
+) -> list[RankedModel]:
+    """Rank installed Ollama models for structured JSON extraction on this machine.
+
+    Args:
+        installed:  List of Ollama model dicts from /api/tags.
+                    Expected keys: name, size (bytes), details.parameter_size.
+        ram_gb:     Total machine RAM in GB (from /proc/meminfo or platform).
+
+    Returns:
+        List of RankedModel sorted best-first (highest task_fit among those
+        that fit in RAM first, then the rest).
+    """
+    if not installed:
+        return []
+
+    ranked: list[RankedModel] = []
+    for m in installed:
+        name = m.get("name", "")
+        size_bytes = m.get("size", 0) or 0
+        size_gb = size_bytes / (1024 ** 3)
+
+        base = _base_name(name)
+        task_fit = _OLLAMA_TASK_FIT.get(base, 1)
+        # Also try matching just the family prefix (e.g. "qwen2.5" from "qwen2.5:14b")
+        if task_fit == 1:
+            for key, score in _OLLAMA_TASK_FIT.items():
+                if base.startswith(key) or key.startswith(base.split(":")[0]):
+                    task_fit = score
+                    break
+
+        # RAM fit: use known map first, fall back to actual model file size × 1.2 headroom
+        known_ram = _OLLAMA_RAM_GB.get(base) or _OLLAMA_RAM_GB.get(name)
+        required_ram = known_ram if known_ram else size_gb * 1.2
+        fits = ram_gb >= required_ram
+
+        ranked.append(RankedModel(
+            name=name,
+            size_gb=round(size_gb, 1),
+            fits_in_ram=fits,
+            task_fit=task_fit,
+            recommended=False,
+        ))
+
+    # Sort: fits-in-RAM first, then by task_fit descending, then by size ascending (prefer smaller)
+    ranked.sort(key=lambda r: (0 if r.fits_in_ram else 1, -r.task_fit, r.size_gb))
+
+    # Mark the top-ranked model that fits in RAM as recommended
+    for r in ranked:
+        if r.fits_in_ram:
+            r.recommended = True
+            break
+
+    return ranked
+
+
+def get_pull_suggestion(installed_names: list[str], ram_gb: float) -> dict[str, Any] | None:
+    """Return the best model to suggest pulling if installed models are all low quality.
+
+    Returns None if a good model (task_fit >= 8) is already installed.
+    """
+    installed_bases = {_base_name(n) for n in installed_names}
+    # Check if any installed model already has high task fit
+    for base in installed_bases:
+        fit = _OLLAMA_TASK_FIT.get(base, 1)
+        if fit >= 8:
+            return None  # already have a good one
+
+    # Suggest the best model that fits in available RAM
+    for suggestion in _PULL_SUGGESTIONS:
+        if ram_gb >= suggestion["min_ram_gb"]:
+            return suggestion
+
+    return None

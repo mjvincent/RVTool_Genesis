@@ -19,7 +19,7 @@ from db.database import get_db
 from db.models import LLMSettings
 from schemas.settings import LLMSettingsResponse, LLMSettingsSave, LLMTestResult, _mask
 from services.crypto import decrypt, encrypt
-from services.model_catalog import ModelRecommendation, get_recommendation
+from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -414,3 +414,136 @@ async def snooze_recommendation(db: AsyncSession = Depends(get_db)) -> LLMSettin
     await db.refresh(row)
     logger.info("Model recommendation snoozed for 7 days — provider=%s", row.provider)
     return _row_to_response(row)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/settings/local-advisor  (Sub-Task A)
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+import platform as _platform
+
+_advisor_cache: dict[str, object] = {}   # simple module-level TTL cache
+_ADVISOR_CACHE_TTL = 86_400              # 24 hours in seconds
+
+
+def _read_ram_gb() -> float:
+    """Read total machine RAM in GB.
+
+    Tries /proc/meminfo first (Linux/Docker), then falls back to platform.
+    Returns 8.0 as a safe default if neither works.
+    """
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    kb = int(line.split()[1])
+                    return round(kb / (1024 * 1024), 1)
+    except OSError:
+        pass
+    try:
+        import psutil  # type: ignore[import]
+        return round(psutil.virtual_memory().total / (1024 ** 3), 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return 8.0
+
+
+def _read_cpu_info() -> dict[str, str]:
+    """Read CPU model and architecture from /proc/cpuinfo or platform."""
+    arch = _platform.machine()
+    cpu_model = "Unknown"
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.lower().startswith("model name"):
+                    cpu_model = line.split(":", 1)[1].strip()
+                    break
+    except OSError:
+        cpu_model = _platform.processor() or "Unknown"
+    return {"cpu_model": cpu_model, "cpu_arch": arch}
+
+
+async def _fetch_ollama_tags(base_url: str) -> list[dict]:
+    """Fetch installed model list from Ollama /api/tags. Returns [] on any error."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/api/tags")
+            resp.raise_for_status()
+            return resp.json().get("models", [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@router.get("/settings/local-advisor")
+async def get_local_advisor(
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return hardware info, installed Ollama models, and a ranked recommendation.
+
+    Cached for 24 hours. Pass ?refresh=true to bypass the cache.
+
+    Response shape:
+      {
+        cpu_model: str, cpu_arch: str, ram_gb: float,
+        ollama_reachable: bool,
+        installed_models: [{name, size_gb, fits_in_ram, task_fit, recommended}],
+        pull_suggestion: {model, label} | null,
+        current_model: str | null,
+      }
+    """
+    import time as _time
+
+    row = await _get_or_create_row(db)
+    from core.config import settings as cfg
+    base_url = row.ollama_base_url or cfg.ollama_base_url
+    current_model = row.ollama_model or cfg.ollama_model
+
+    cache_key = base_url
+    now = _time.time()
+    if not refresh and cache_key in _advisor_cache:
+        cached = _advisor_cache[cache_key]  # type: ignore[assignment]
+        if now - cached["_ts"] < _ADVISOR_CACHE_TTL:  # type: ignore[index]
+            result = dict(cached)
+            result.pop("_ts", None)
+            result["current_model"] = current_model
+            return result
+
+    cpu_info = _read_cpu_info()
+    ram_gb = _read_ram_gb()
+    installed_raw = await _fetch_ollama_tags(base_url)
+    ollama_reachable = len(installed_raw) >= 0  # reachable even if no models installed
+
+    # Re-check: if we got an empty list it could be unreachable OR just no models
+    # We do a separate lightweight HEAD/GET to confirm reachability
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.get(f"{base_url}/api/tags")
+        ollama_reachable = True
+    except Exception:  # noqa: BLE001
+        ollama_reachable = False
+
+    ranked = rank_local_models(installed_raw, ram_gb)
+    pull = get_pull_suggestion([m.name for m in ranked], ram_gb)
+
+    result = {
+        **cpu_info,
+        "ram_gb": ram_gb,
+        "ollama_reachable": ollama_reachable,
+        "installed_models": [
+            {
+                "name": r.name,
+                "size_gb": r.size_gb,
+                "fits_in_ram": r.fits_in_ram,
+                "task_fit": r.task_fit,
+                "recommended": r.recommended,
+            }
+            for r in ranked
+        ],
+        "pull_suggestion": pull,
+        "current_model": current_model,
+    }
+
+    _advisor_cache[cache_key] = {**result, "_ts": now}
+    return result

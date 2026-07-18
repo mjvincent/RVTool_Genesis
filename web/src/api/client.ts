@@ -78,6 +78,7 @@ export interface ServerRecord {
   assumptions: Assumption[];
   is_excluded: boolean;
   exclusion_reason: string | null;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -130,6 +131,24 @@ export interface ModelRecommendation {
 export interface ModelRecommendationCheck {
   recommendation: ModelRecommendation | null;
   snoozed: boolean;
+}
+
+export interface LocalAdvisorModel {
+  name: string;
+  size_gb: number;
+  fits_in_ram: boolean;
+  task_fit: number;
+  recommended: boolean;
+}
+
+export interface LocalAdvisorResponse {
+  cpu_model: string;
+  cpu_arch: string;
+  ram_gb: number;
+  ollama_reachable: boolean;
+  installed_models: LocalAdvisorModel[];
+  pull_suggestion: { model: string; label: string } | null;
+  current_model: string | null;
 }
 
 export interface LLMSettingsSave {
@@ -224,12 +243,18 @@ export const api = {
       fetch(`${BASE}/projects/${projectId}/records`).then(r => r.json()),
     getAssumptions: (projectId: string): Promise<Assumption[]> =>
       fetch(`${BASE}/projects/${projectId}/assumptions`).then(r => r.json()),
-    patchRecord: (projectId: string, recordId: string, vinfo: Record<string, any>): Promise<ServerRecord> =>
-      fetch(`${BASE}/projects/${projectId}/records/${recordId}`, {
+    patchRecord: (projectId: string, recordId: string, fields: Record<string, any>): Promise<ServerRecord> => {
+      // Top-level keys (notes) are handled separately from vinfo fields on the backend.
+      // We send them merged into a flat dict; the backend pops known top-level keys first.
+      const { notes, ...vinfo } = fields;
+      const body: Record<string, any> = { ...vinfo };
+      if (notes !== undefined) body.notes = notes;
+      return fetch(`${BASE}/projects/${projectId}/records/${recordId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vinfo }),
-      }).then(r => r.json()),
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+    },
     excludeRecord: (projectId: string, recordId: string, isExcluded: boolean, reason?: string | null): Promise<ServerRecord> =>
       fetch(`${BASE}/projects/${projectId}/records/${recordId}/exclude`, {
         method: 'PATCH',
@@ -343,6 +368,8 @@ export const api = {
       fetch(`${BASE}/settings/model-recommendation/rollback`, { method: 'POST' }).then(r => r.json()),
     snoozeRecommendation: (): Promise<LLMSettingsResponse> =>
       fetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }).then(r => r.json()),
+    getLocalAdvisor: (refresh = false): Promise<LocalAdvisorResponse> =>
+      fetch(`${BASE}/settings/local-advisor${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
   },
 
   pricingTemplate: {

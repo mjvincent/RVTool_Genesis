@@ -28,6 +28,7 @@ class ServerRecordResponse(BaseModel):
     error_message: str | None
     is_excluded: bool
     exclusion_reason: str | None
+    notes: str | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
