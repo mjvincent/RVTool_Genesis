@@ -496,6 +496,13 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v1.4.0
+- **Local AI Advisor** — Settings page ranks your installed Ollama models by task-fit and RAM fit; suggests `ollama pull` for better models.
+- **Notes field** — Annotate individual server records with free-text practitioner notes (saved to DB, shown in expanded row).
+- **Re-normalize single record** — Re-run AI on one record from the Edit modal without resetting the whole project.
+- **Bulk op no-op → 422** — Bulk OS Replace / Exclude / Fix Nano Profiles now return a clear error instead of a misleading success banner when nothing matched.
+- **LLM empty-response guard** — Records where the AI returns `vinfo: {}` are now marked `error` instead of silently completing with blank export rows.
+
 ### v1.3.0
 
 - **PowerVS disk clamping bypass** — IBM VPC boot-volume constraints (100 GB min / 250 GB max) no longer apply to PowerVS records (AIX / IBM i / Linux-on-Power). Customer disk sizes pass through unchanged to the IBM Price Estimator and PowerVS exports. x86 behaviour unchanged.

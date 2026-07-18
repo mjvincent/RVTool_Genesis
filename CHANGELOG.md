@@ -11,6 +11,43 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.4.0] — 2025-07-17
+
+### Added
+- **Local AI Advisor** — Settings page now shows a "Local AI Advisor" card when Ollama
+  is the active provider. On load it reads Docker container CPU/RAM, checks Ollama
+  `/api/tags` for installed models, ranks them by task-fit score and RAM fit, and
+  recommends the best model for structured JSON extraction. Shows a `ollama pull`
+  command when a better model is available. 24-hour cache with a manual Refresh button.
+  (`api/routers/settings.py`, `api/services/model_catalog.py`,
+  `web/src/pages/SettingsPage.tsx`)
+- **Notes field on server records** — Practitioners can now add free-text annotations
+  to individual server records (e.g. "confirmed decommissioned", "dependency on X").
+  Notes are editable in the Edit Record modal and displayed in the expanded row on the
+  Review page. DB migration `a2b3c4d5e6f7` adds `notes TEXT NULL` to `server_records`.
+  (`api/db/models.py`, `api/schemas/upload.py`, `api/routers/uploads.py`,
+  `web/src/components/EditRecordModal.tsx`, `web/src/components/RecordsTable.tsx`)
+- **Re-normalize single record** — Edit Record modal now has a "Re-normalize this
+  record with AI" link at the bottom of any completed record. Clicking it shows an
+  inline confirmation, then resets and re-runs AI normalization for just that one
+  record without affecting any others.
+  (`web/src/components/EditRecordModal.tsx`)
+
+### Fixed
+- **Bulk operation no-op now returns HTTP 422** — Bulk OS Replace, Fix Nano Profiles,
+  and Bulk Exclude previously returned HTTP 200 with `updated_count: 0` when no
+  records matched the filter, showing a misleading green success banner. They now
+  return HTTP 422 with a descriptive error message; the existing error banner in each
+  modal handles it automatically.
+  (`api/routers/uploads.py`)
+- **Empty LLM response marked as error** — When the AI normalizer returns an empty
+  `vinfo: {}` or a response missing all three anchor fields (`vm_name`, `cpus`,
+  `memory_mb`), the record is now marked `processing_status = "error"` instead of
+  silently completing. The error message directs the user to Edit & fix manually.
+  (`api/routers/processing.py`)
+
+---
+
 ## [1.3.0] — 2025-07-17
 
 ### Fixed
