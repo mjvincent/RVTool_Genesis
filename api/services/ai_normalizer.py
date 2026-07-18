@@ -621,62 +621,72 @@ def _sanitize_numeric_fields(result: dict) -> dict:
         vinfo["provisioned_mb"]  = _clamp_mb(vinfo.get("provisioned_mb", 0),  "vinfo/provisioned_mb",  new_assumptions, _MAX_DISK_MB)
         vinfo["in_use_mb"]       = _clamp_mb(vinfo.get("in_use_mb", 0),       "vinfo/in_use_mb",       new_assumptions, _MAX_DISK_MB)
 
-        # Store the full customer disk size BEFORE IBM VPC boot clamping.
-        # This value is used by vpc_calculator_generator to compute Data Volume size:
-        #   data_gb = max(0, total_disk_gb - 250)
+        # Store the full customer disk size.  For PowerVS this is always the raw
+        # customer value (no clamping); for x86 VSIs this is stored pre-clamp so
+        # vpc_calculator_generator can compute the Data Volume overflow correctly.
         vinfo["total_disk_mb"] = vinfo["provisioned_mb"]
 
-        # IBM Cloud VPC boot volume constraints (applies to x86 VSIs only).
-        # We clamp here at normalisation time so the adjustment is visible in the
-        # Review page AssumptionsPanel and in the AI Assumptions Report.
-        # The vpc_calculator_generator mirrors this logic at export time for the
-        # Boot Volume Size (GB) and Data Volume Size (GB) columns.
+        # IBM Cloud VPC boot volume constraints (x86 VSIs only — NOT PowerVS).
+        # PowerVS storage has no 100 GB floor or 250 GB ceiling: the IBM Price
+        # Estimator and PowerVS Cloud Solution Export accept any disk size the
+        # customer provides, so we pass the raw value through unchanged.
+        #
+        # Detection: use both the LLM's server_type field (already populated by
+        # this point in the response) and _is_powervs_os() on os_config as a
+        # belt-and-suspenders guard matching the post-processor logic.
+        _is_pvs = (
+            result.get("server_type") == "powervs"
+            or _is_powervs_os(str(vinfo.get("os_config") or ""))
+        )
+
         prov_mb = vinfo["provisioned_mb"]
-        if prov_mb < _IBM_VPC_BOOT_MIN_MB:
-            original_gb = round(prov_mb / 1024, 1)
-            vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MIN_MB
-            new_assumptions.append({
-                "field_name": "vinfo/provisioned_mb",
-                "assumed_value": str(_IBM_VPC_BOOT_MIN_MB),
-                "original_value": str(prov_mb),
-                "reasoning": (
-                    f"IBM Cloud VPC boot volume minimum is 100 GB. Customer-provided disk "
-                    f"size of {original_gb} GB ({prov_mb} MB) is below this threshold and "
-                    f"has been raised to 100 GB (102,400 MB). Please confirm the correct "
-                    f"disk size with the customer."
-                ),
-                "confidence": "medium",
-            })
-            logger.info(
-                "IBM VPC boot disk clamped UP: %d MB → %d MB (was below 100 GB minimum)",
-                prov_mb, _IBM_VPC_BOOT_MIN_MB,
-            )
-        elif prov_mb > _IBM_VPC_BOOT_MAX_MB:
-            original_gb = round(prov_mb / 1024, 1)
-            overflow_mb = prov_mb - _IBM_VPC_BOOT_MAX_MB
-            overflow_gb = round(overflow_mb / 1024, 1)
-            vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MAX_MB
-            new_assumptions.append({
-                "field_name": "vinfo/provisioned_mb",
-                "assumed_value": str(_IBM_VPC_BOOT_MAX_MB),
-                "original_value": str(prov_mb),
-                "reasoning": (
-                    f"IBM Cloud VPC boot volume maximum is 250 GB. Customer-provided disk "
-                    f"size of {original_gb} GB ({prov_mb} MB) exceeds this limit. Boot "
-                    f"disk has been set to 250 GB (256,000 MB). The excess {overflow_gb} GB "
-                    f"({overflow_mb} MB) will be added as a separate Data Volume in the "
-                    f"Cloud Solution Export. Confirm data volume requirements with customer."
-                ),
-                "confidence": "medium",
-            })
-            logger.info(
-                "IBM VPC boot disk clamped DOWN: %d MB → %d MB (%.1f GB overflow → Data Volume)",
-                prov_mb, _IBM_VPC_BOOT_MAX_MB, overflow_gb,
-            )
+        if not _is_pvs:
+            if prov_mb < _IBM_VPC_BOOT_MIN_MB:
+                original_gb = round(prov_mb / 1024, 1)
+                vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MIN_MB
+                new_assumptions.append({
+                    "field_name": "vinfo/provisioned_mb",
+                    "assumed_value": str(_IBM_VPC_BOOT_MIN_MB),
+                    "original_value": str(prov_mb),
+                    "reasoning": (
+                        f"IBM Cloud VPC boot volume minimum is 100 GB. Customer-provided disk "
+                        f"size of {original_gb} GB ({prov_mb} MB) is below this threshold and "
+                        f"has been raised to 100 GB (102,400 MB). Please confirm the correct "
+                        f"disk size with the customer."
+                    ),
+                    "confidence": "medium",
+                })
+                logger.info(
+                    "IBM VPC boot disk clamped UP: %d MB → %d MB (was below 100 GB minimum)",
+                    prov_mb, _IBM_VPC_BOOT_MIN_MB,
+                )
+            elif prov_mb > _IBM_VPC_BOOT_MAX_MB:
+                original_gb = round(prov_mb / 1024, 1)
+                overflow_mb = prov_mb - _IBM_VPC_BOOT_MAX_MB
+                overflow_gb = round(overflow_mb / 1024, 1)
+                vinfo["provisioned_mb"] = _IBM_VPC_BOOT_MAX_MB
+                new_assumptions.append({
+                    "field_name": "vinfo/provisioned_mb",
+                    "assumed_value": str(_IBM_VPC_BOOT_MAX_MB),
+                    "original_value": str(prov_mb),
+                    "reasoning": (
+                        f"IBM Cloud VPC boot volume maximum is 250 GB. Customer-provided disk "
+                        f"size of {original_gb} GB ({prov_mb} MB) exceeds this limit. Boot "
+                        f"disk has been set to 250 GB (256,000 MB). The excess {overflow_gb} GB "
+                        f"({overflow_mb} MB) will be added as a separate Data Volume in the "
+                        f"Cloud Solution Export. Confirm data volume requirements with customer."
+                    ),
+                    "confidence": "medium",
+                })
+                logger.info(
+                    "IBM VPC boot disk clamped DOWN: %d MB → %d MB (%.1f GB overflow → Data Volume)",
+                    prov_mb, _IBM_VPC_BOOT_MAX_MB, overflow_gb,
+                )
 
         # Recalculate in_use_mb if it was AI-estimated at 60% of the original provisioned_mb.
         # If the customer provided a real in_use_mb it won't match exactly 60% so we leave it.
-        if original_prov > 0 and vinfo["in_use_mb"] == round(original_prov * 0.6):
+        # Skip for PowerVS — in_use_mb is not used in any PowerVS export.
+        if not _is_pvs and original_prov > 0 and vinfo["in_use_mb"] == round(original_prov * 0.6):
             vinfo["in_use_mb"] = round(vinfo["provisioned_mb"] * 0.6)
 
         # Fix 4: nics and disks must be non-null integers >= 1
