@@ -142,6 +142,7 @@ This is useful for keeping multiple engagements per customer tidy.
 1. On the **Normalize** page, click **Start normalization**
 2. A progress bar shows: **complete / total** records processed
 3. A per-record heartbeat timer shows how long the current record is taking
+4. The name of the server currently being normalized is shown below the progress bar: *"Currently processing: vm-name"*
 
 > **For Ollama (local):** phi4-mini typically takes 3–8 seconds per record.
 > A 100-server inventory completes in roughly 5–15 minutes.
@@ -155,7 +156,7 @@ For each server the AI maps freeform customer columns to IBM VPC fields:
 | CPU count | Reads any variation of "CPUs", "vCPUs", "cores" |
 | RAM | Reads MB or GB; detects and corrects GB→MB unit mismatches |
 | OS family | Maps 30+ OS name patterns to IBM VPC stock images |
-| Disk size | Reads any disk/storage column; applies 100 GB min / 250 GB max boot disk rule |
+| Disk size | Reads any disk/storage column. **x86 VSIs:** applies 100 GB min / 250 GB max boot disk rule; overflow becomes a separate Data Volume. **PowerVS (AIX / IBM i):** customer disk size passes through unchanged — no floor or ceiling. |
 | Server type | If OS is AIX or IBM i → `powervs`; otherwise → `x86` |
 
 Every inference is recorded as an **assumption** with field name, assumed value,
@@ -255,7 +256,8 @@ on all records matching a specific value in a single operation. This is useful f
 2. In the modal, select the **OS to replace** (dropdown shows only OS values
    present in your project)
 3. Select the **replacement OS**
-4. The modal shows how many records will be affected
+4. The modal shows how many records will be affected. Expand **"Show N affected servers"**
+   to see the first 10 server names before confirming.
 5. Click **Replace OS on N records**
 
 The change is permanent and logged as an assumption in the AI Assumptions Report,
@@ -275,10 +277,28 @@ fail to populate when you import the Cloud Solution Export.
 **To fix:**
 1. Click **Fix Nano Profiles** in the warning banner
 2. Choose the target profile: `nxf-2x1` (2 vCPU / 1 GB RAM) or `nxf-2x2` (2 vCPU / 2 GB RAM)
-3. Click **Replace on N servers**
+3. Expand **"Show N affected servers"** to preview which servers will be upgraded before confirming
+4. Click **Replace on N servers**
 
 The upgrade sets `num_cpus = 2` and adjusts RAM to match the target profile.
 The change is logged as an assumption.
+
+### Bulk Exclude by filter
+
+Use **Bulk Exclude** (button above the records table) to exclude all active records
+matching a server name substring or OS family in one action.
+
+**How to use it:**
+1. Click **Bulk Exclude**
+2. Choose filter type: **Server name contains…** or **OS equals…**
+3. Enter the filter value (e.g. `dev`, `test-`, or select an OS from the dropdown)
+4. The modal shows a live count of matching records. Expand **"Show N affected servers"**
+   to preview the first 10 server names before confirming.
+5. Optionally enter an **exclusion reason** (e.g. *"Test servers — out of scope"*)
+6. Click **Exclude N records**
+
+Excluded servers appear in the **Excluded Servers** audit sheet of the AI Assumptions
+Report. Exclusion is reversible — uncheck the Exclude checkbox on any row at any time.
 
 ---
 
@@ -559,6 +579,7 @@ e.g.  Medtronic_PowerVS_DAL10_2026Q3
 | **IBM Price Estimator opens with #UNCALCULATED** | Expected behavior | These are formula cells. Open in Excel — they recalculate automatically. Do not open in Numbers or LibreOffice. |
 | **IBM Price Estimator shows $0 pricing** | OS value doesn't match Assumptions sheet | Verify the OS column in the Multiple LPAR Price Estimate sheet uses exact values: `AIX`, `IBM_i`, `IBM_i_MOL`, `Red Hat GP`, `Red Hat SAP`, `SUSE GP`, `SUSE SAP`, `BYO Lnx / NA`. |
 | **Export page shows 0 PowerVS servers** | Records not tagged as PowerVS | In Review, check that AIX/IBM i servers show the purple "PowerVS" tag. If not, use Edit Record to set the correct OS, then re-export. |
+| **PowerVS disk size was changed to 100 GB** | Old normalization run before v1.3.0 | Re-normalize affected records (Edit Record → save, or reset to pending). v1.3.0+ passes customer disk sizes through unchanged for PowerVS. |
 | **Backup restore creates a duplicate project** | Expected behavior | Restore always creates a new project with `(restored YYYY-MM-DD)` suffix. Delete the original if it's no longer needed. |
 | **Test connection fails for watsonx.ai** | Wrong API key or Project ID | Confirm the API key has `ML Platform` scope. Confirm the Project ID is from the watsonx.ai project (not the IBM Cloud project). |
 | **Container won't start** | Port conflict | Check `docker ps` — another service may be using port 3001 or 8001. Edit `docker-compose.yml` to use different host ports. |

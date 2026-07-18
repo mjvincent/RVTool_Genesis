@@ -36,7 +36,7 @@ reappear on ReviewPage and stale upload errors to reappear on UploadPage.
 - `web/src/pages/NormalizePage.tsx` lines 64–68 — existing cleanup (add error clears here)
 
 ### Status
-[ ] pending
+[x] done — committed 57f3d94
 
 ---
 
@@ -70,7 +70,7 @@ an empty `RecordsTable` with no explanation. It looks broken.
   (`total`, `pending`, `processing`, `complete`, `error`, `is_complete`)
 
 ### Status
-[ ] pending
+[x] done — committed 57f3d94
 
 ---
 
@@ -115,7 +115,7 @@ below the existing count pill. If more than 10 are affected, show "…and N more
 - Pattern to follow: return `{"count": N, "names": [...]}` and update TypeScript interface
 
 ### Status
-[ ] pending
+[x] done — committed 57f3d94
 
 ---
 
@@ -153,7 +153,7 @@ the backend during transient failures.
 - No backend changes needed
 
 ### Status
-[ ] pending
+[x] done — committed 57f3d94
 
 ---
 
@@ -198,4 +198,4 @@ record in the status response.
   `normalized_data` is None (record not yet normalized), fall back to `str(record.id)`
 
 ### Status
-[ ] pending
+[x] done — committed 57f3d94

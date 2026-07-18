@@ -4,7 +4,7 @@ A containerized tool that converts customer server inventory spreadsheets into I
 
 Powered by a **pluggable LLM backend** — use IBM watsonx.ai for IBM engagement work, or run fully local with Ollama (no API key, no cloud). Configure your preferred provider in the Settings page.
 
-📖 [User Guide](docs/USER_GUIDE.md) · ⚙️ [Operations Guide](docs/OPERATIONS_GUIDE.md)
+📖 [User Guide](docs/USER_GUIDE.md) · ⚙️ [Operations Guide](docs/OPERATIONS_GUIDE.md) · 📝 [Changelog](CHANGELOG.md) · 🤝 [Contributing](CONTRIBUTING.md)
 
 ---
 
@@ -38,7 +38,7 @@ With standard workday constraints (lunch, hourly breaks, daily distractions), a 
 ## What it does
 
 1. **Upload** any customer-produced spreadsheet (Excel/CSV) listing servers — any column layout, freeform
-2. **AI Normalization** — maps freeform customer columns to IBM VPC / PowerVS fields, fills in missing data (OS images, disk sizes, storage tiers, regions), and documents every inference as an assumption
+2. **AI Normalization** — maps freeform customer columns to IBM VPC / PowerVS fields, fills in missing data (OS images, disk sizes, storage tiers, regions), and documents every inference as an assumption. IBM VPC boot-disk constraints (100 GB min / 250 GB max) apply to x86 records only — PowerVS disk sizes pass through unchanged.
 3. **Review** — inspect all normalized records and AI assumptions; exclude servers, edit fields inline, bulk-replace OS values, fix unsupported Flex-Nano profiles
 4. **Export** — download output files for your IBM pricing tool of choice (see All Exports below)
 
@@ -494,45 +494,47 @@ provider fails.
 
 ## Changelog
 
+> Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
+
+### v1.3.0
+
+- **PowerVS disk clamping bypass** — IBM VPC boot-volume constraints (100 GB min / 250 GB max) no longer apply to PowerVS records (AIX / IBM i / Linux-on-Power). Customer disk sizes pass through unchanged to the IBM Price Estimator and PowerVS exports. x86 behaviour unchanged.
+- **14 new unit tests** — `tests/test_normalizer_disk_clamping.py` covers both x86 clamping and PowerVS pass-through paths.
+
+### v1.2.2
+
+- **UX polish (5 improvements)** — Stale banners cleared on navigation; empty Review state before normalization; bulk modals show expandable accordion with first 10 affected server names; Normalize polling exponential backoff; "Currently processing: `<vm-name>`" shown during normalization.
+
+### v1.2.1
+
+- **Export summary** — Machine-type breakdown (S1022 / E1050 / E1080) shown after IBM Price Estimator populate.
+- **Duplicate project** — One-click copy from ⋮ overflow menu.
+- **Processing status badge** — Green/amber pill on project cards.
+- **Bulk Exclude by filter** — Exclude all matching servers by name substring or OS family.
+
 ### v1.2.0
 
-- **Data Domains fix** — `_DATA_DOMAINS_ROWS` expanded from 75 to 174 rows covering all non-Flex IBM VPC profile families (`bx2-*`, `cx2-*`, `mx2-*`, `bx3d-*`, `cx3d-*`, `mx3d-*`, `ux2d-*`, `gx2-*`, `gx3-*`, `vx2d-*`, `ox2-*`). Resolves blank rows in the IBM Cloud Cost Estimator after import.
+- **Data Domains fix** — `_DATA_DOMAINS_ROWS` expanded from 75 to 174 rows; resolves blank rows in the IBM Cloud Cost Estimator after import.
 - **nxf-2x1 and nxf-2x2 added to Data Domains** — Flex-Nano profiles now recognized by the IBM Cloud Solutioning Tool.
-- **Flex-Nano profile warning + bulk replace** — Review page shows a warning banner when any x86 server has an `nxf-1x*` profile not recognized by the IBM Solutioning Tool. "Fix Nano Profiles" button upgrades all affected servers to `nxf-2x1` or `nxf-2x2` in one action.
-- **Edit record modal** — Any normalized record can be edited inline from the Review table. 11 editable vinfo fields with critical (red) and advisory (yellow) severity indicators. Failed records can be pre-filled from raw spreadsheet data and promoted to `complete` on manual edit.
-- **Bulk OS Replace** — Replace the OS family on all matching records in one operation. Changes are logged as assumptions. Useful for pricing scenario modelling (e.g. Windows → Linux).
-- **Folder organization** — Two-level folder hierarchy (Root → Customer → Engagement) for grouping projects. Create, rename, delete folders; move projects between folders.
-
----
+- **Flex-Nano profile warning + bulk replace** — Review page detects `nxf-1x*` profiles; "Fix Nano Profiles" upgrades all affected servers in one action.
+- **Edit record modal** — Inline editing of 11 vinfo fields with severity indicators; failed records recoverable from raw data.
+- **Bulk OS Replace** — Replace OS family on all matching records; logged as assumptions.
+- **Folder organization** — Two-level folder hierarchy for project grouping.
 
 ### v1.1.0
 
-- **PowerVS Cloud Solution Export** — 3-sheet IBM PowerVS Calculator workbook (Project Settings, Exceptions, Data Domains). PowerVS equivalent of the x86 Cloud Solution Export.
-- **PowerVS Cool Tool Export** — 4-sheet RVTools workbook for IBM Cool PowerVS pricing. Upload separately from the x86 Cool Tool export.
-- **PowerVS RVTools Export (22-sheet)** — Full 22-sheet format for VCF Migration Lite.
-- **PowerVS AI Assumptions Report** — Assumptions for PowerVS records only.
-- **IBM Price Estimator template filler** — Upload the IBM Power Virtual Server Price Estimator once per project. Click "Populate & Download" to fill the yellow input cells from PowerVS records using surgical XML surgery (preserves all formulas and named ranges). Machine type auto-selected: S1022 / E1050 / E1080.
-- **Backup & Restore** — Download any project as a portable `.json` bundle; full system `.zip` backup; restore on any instance. No re-normalization needed.
-- **Multi-provider LLM support** — Settings page: Ollama (local), IBM watsonx.ai, OpenAI-compatible, Anthropic Claude. AES-256 key encryption for all cloud API keys.
-- **Model recommendations** — Auto-detect available model upgrades; one-click apply, rollback, or 7-day snooze.
-- **PowerVS region/datacenter per project** — Independent from VPC region; set at project creation; editable on the Export page.
-
----
+- **PowerVS Cloud Solution Export**, **PowerVS Cool Tool Export**, **PowerVS RVTools (22-sheet)**, **PowerVS AI Assumptions Report** — Full PowerVS export set.
+- **IBM Price Estimator template filler** — Surgical zip-level XML surgery; formulas and named ranges preserved; S1022 / E1050 / E1080 auto-selected.
+- **Backup & Restore** — Portable `.json` project bundles; full system `.zip` backup.
+- **Multi-provider LLM support** — Ollama (local), IBM watsonx.ai, OpenAI-compatible, Anthropic Claude. AES-256 key encryption.
+- **Model recommendations** — One-click apply, rollback, or 7-day snooze.
+- **PowerVS region/datacenter per project** — Independent from VPC region.
 
 ### v1.0.0 — First stable release
 
-- **IBM VPC boot disk sizing** — Boot disk clamped to 100 GB minimum / 250 GB maximum per IBM VPC rules; overflow written as a separate Data Volume row in the Cloud Solution Export. Both cases recorded as documented assumptions.
-- **`total_disk_mb` field** — Full corrected disk size preserved before boot cap so Data Volume is never lost when the boot disk is clamped.
-- **GB → MB unit mismatch detection** — LLM sometimes returns raw GB values in the MB field when the source spreadsheet uses a GB column. Cross-check against raw column names now auto-corrects (raw_gb × 1024) and logs the fix as an assumption.
-- **PowerVS OS families** — Eight IBM Cool PowerVS OS families (`AIX`, `IBM i`, `IBM i MOL`, `Linux BYOL`, `SAP SUSE`, `SAP Red Hat`, `Red Hat GP`, `SUSE GP`) now mapped at normalize time and written to `"OS according to the configuration file"` in both the 4-sheet and 22-sheet RVTools exports.
-- **`Operating System VS` column** — Cloud Solution Export now populates the IBM VPC stock image name for every x86 row, including SAP (RHEL/SUSE) and SQL Server variants.
-- **Extended OS normalisation** — Added Rocky Linux, AlmaLinux, Fedora, IBM i, IBM i MOL, RHEL/SUSE for SAP, and Windows with SQL Server patterns to the AI normalizer and frontend OS picker.
-- **Cloud Solution Export** — 3-sheet IBM Cloud Cost Estimator workbook (Project Settings, Exceptions, Data Domains). Profiles x86 servers onto IBM VPC Flex instances. Eliminates the need for the `rvtools2vpc` web tool.
-- **IBM VPC profile selection** — Flex-Compute (`cxf`), Flex-Balanced (`bxf`), Flex-Memory (`mxf`) chosen automatically from CPU/RAM ratio.
-- **Full 22-sheet RVTools output** — all tabs required by VCF Migration Lite.
-- **Ollama timeout + retry + Python fallback synthesizer** — records never get permanently stuck.
-- **Per-project VPC region/zone** — 15 regions, all standard zones; stamped into every export row.
-- **PowerVS auto-detection** — AIX and IBM i OS designate records as `server_type = "powervs"` automatically.
-- **Server exclusion** — Exclude checkbox in Review table; optional reason stored in DB; Excluded Servers audit sheet in Assumptions Report.
-- **Reset stuck endpoint + UI button** — one-click recovery from stuck normalization without needing the terminal.
-- **VERSION file** — Single source of truth at repo root.
+- **Cloud Solution Export** (x86), **RVTools Export (22-sheet)**, **AI Assumptions Report**.
+- **IBM VPC boot disk sizing** — 100 GB min / 250 GB max for x86 VSIs; overflow as Data Volume; both cases as documented assumptions.
+- **GB → MB unit mismatch detection** — Auto-corrects and logs as assumption.
+- **PowerVS auto-detection**, **server exclusion**, **per-project VPC region/zone**.
+- **Ollama timeout + retry + Python fallback synthesizer** — records never permanently stuck.
+- **Reset stuck endpoint + UI button**.
