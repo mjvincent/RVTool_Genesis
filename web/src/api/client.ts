@@ -169,6 +169,8 @@ export interface DiscoveryResponse {
   sources_checked: string[];
   sources_reachable: Record<string, boolean>;
   ram_gb: number;
+  current_model: string | null;
+  current_task_fit: number | null;
 }
 
 export interface LLMSettingsSave {
@@ -450,6 +452,14 @@ export const api = {
       }),
     discoverModels: (refresh = false): Promise<DiscoveryResponse> =>
       fetch(`${BASE}/settings/discover-models${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
+    pullModel: (model: string): EventSource =>
+      new EventSource(`${BASE}/settings/pull-model-stream?model=${encodeURIComponent(model)}`),
+    pullModelFetch: (model: string): Promise<ReadableStream<Uint8Array> | null> =>
+      fetch(`${BASE}/settings/pull-model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      }).then(r => r.body),
   },
 
   pricingTemplate: {

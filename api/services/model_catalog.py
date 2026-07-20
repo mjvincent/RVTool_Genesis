@@ -201,22 +201,37 @@ _OLLAMA_TASK_FIT: dict[str, int] = {
     "qwen2.5:32b":       10,
     "qwen2.5:7b":         9,
     "qwen2.5":            9,   # generic tag fallback for untagged qwen2.5
+    "qwen3":              9,   # Qwen 3 series (qwen3:8b, qwen3:14b, qwen3:30b, etc.)
+    "qwen3.6":            9,   # 36B MoE variant
     # --- Tier 2: capable generalists ---
     "llama3.3":           8,
-    "mistral-nemo":       8,
-    "llama3.1":           7,
     "llama3.2":           7,
+    "llama3.1":           7,
+    "llama3":             7,   # covers llama3-*-GGUF compound names
+    "llama4":             8,   # Llama 4 when available
+    "mistral-nemo":       8,
     "mistral":            7,
+    "mistral-small":      8,
     "gemma3":             7,
+    "gemma4":             8,   # Gemma 4 series
     "gemma2":             6,
+    "deepseek-v3":        8,   # DeepSeek V3 — strong JSON extraction
+    "deepseek-v4":        9,   # DeepSeek V4
+    "deepseek-r2":        8,
+    "deepseek-r1":        7,
+    "deepseek":           7,   # generic deepseek fallback
+    "command-r":          8,   # Cohere Command-R
+    "command-r-plus":     9,
     # --- Code-specialised models — NOT suited for JSON extraction ---
     "qwen2.5-coder":      3,
     "qwen2.5-coder:1.5b": 3,
     "qwen2.5-coder:7b":   3,
     "qwen2.5-coder:14b":  3,
     "qwen2.5-coder:32b":  3,
+    "qwen3-coder":        3,
     "codellama":          3,
     "deepseek-coder":     3,
+    "deepseek-coder-v2":  3,
     "starcoder":          3,
     "starcoder2":         3,
     "codegemma":          3,
@@ -231,6 +246,42 @@ _OLLAMA_TASK_FIT: dict[str, int] = {
     "bge-m3":             1,
     "bge-large":          1,
 }
+
+# Ordered prefix table for HuggingFace compound names that won't match the exact
+# lookup above (e.g. "qwen3.6-27b-mtp-gguf" → family "qwen3" → score 9).
+# Evaluated in order; first match wins.  More specific prefixes listed first.
+_FAMILY_PREFIX_SCORES: list[tuple[str, int]] = [
+    ("phi4-mini",         9),
+    ("phi4",             10),
+    ("qwen2.5-coder",     3),
+    ("qwen3-coder",       3),
+    ("qwen3.6",           9),
+    ("qwen3",             9),
+    ("qwen2.5",           9),
+    ("qwen2",             7),
+    ("deepseek-coder",    3),
+    ("deepseek-v4",       9),
+    ("deepseek-v3",       8),
+    ("deepseek-r2",       8),
+    ("deepseek-r1",       7),
+    ("deepseek",          7),
+    ("llama4",            8),
+    ("llama3.3",          8),
+    ("llama3.2",          7),
+    ("llama3.1",          7),
+    ("llama3",            7),
+    ("gemma4",            8),
+    ("gemma-4",           8),   # HuggingFace uses hyphen: gemma-4-27b-it-gguf
+    ("gemma3",            7),
+    ("gemma-3",           7),
+    ("gemma2",            6),
+    ("gemma",             6),
+    ("mistral-small",     8),
+    ("mistral-nemo",      8),
+    ("mistral",           7),
+    ("command-r-plus",    9),
+    ("command-r",         8),
+]
 
 # Name fragments that always cap task_fit to 4, regardless of the lookup table.
 # Guards against future unknown specialised models inheriting a high family score
@@ -521,27 +572,53 @@ class DiscoveredModel:
     pull_command: str
 
 
+# Curated static fallback catalog — used when ollama.com is unreachable (e.g. Docker).
+# Format matches the Ollama search API response shape used in discover_models().
+# Models are listed best-for-task first; size in bytes uses 1 GB = 1_073_741_824.
+_OLLAMA_STATIC_CATALOG: list[dict] = [
+    {"name": "phi4",          "description": "Microsoft Phi-4 14B — top-tier JSON extraction", "pulls": 2_000_000, "tags": [{"name": "latest", "size": 8_589_934_592}]},
+    {"name": "phi4-mini",     "description": "Microsoft Phi-4 Mini 3.8B — fast, low RAM", "pulls": 3_000_000, "tags": [{"name": "latest", "size": 4_294_967_296}]},
+    {"name": "qwen3:8b",      "description": "Alibaba Qwen 3 8B — excellent instruction following", "pulls": 1_500_000, "tags": [{"name": "8b",   "size": 5_368_709_120}]},
+    {"name": "qwen3:14b",     "description": "Alibaba Qwen 3 14B — strong multi-language structured output", "pulls": 800_000, "tags": [{"name": "14b", "size": 9_663_676_416}]},
+    {"name": "qwen3:30b-a3b", "description": "Alibaba Qwen 3 30B MoE — high accuracy, moderate RAM", "pulls": 400_000, "tags": [{"name": "latest", "size": 18_253_611_008}]},
+    {"name": "qwen2.5:14b",   "description": "Alibaba Qwen 2.5 14B — proven JSON accuracy", "pulls": 2_500_000, "tags": [{"name": "14b", "size": 9_663_676_416}]},
+    {"name": "qwen2.5:7b",    "description": "Alibaba Qwen 2.5 7B — best value for RAM", "pulls": 4_000_000, "tags": [{"name": "7b",  "size": 4_831_838_208}]},
+    {"name": "llama3.3",      "description": "Meta Llama 3.3 70B — flagship generalist (high RAM)", "pulls": 1_000_000, "tags": [{"name": "latest", "size": 43_486_756_864}]},
+    {"name": "llama3.2:3b",   "description": "Meta Llama 3.2 3B — lightweight, fast", "pulls": 5_000_000, "tags": [{"name": "3b",  "size": 2_147_483_648}]},
+    {"name": "mistral-small", "description": "Mistral Small 22B — strong structured output", "pulls": 600_000, "tags": [{"name": "latest", "size": 13_421_772_800}]},
+    {"name": "mistral-nemo",  "description": "Mistral NeMo 12B — good balance of speed and quality", "pulls": 800_000, "tags": [{"name": "latest", "size": 7_516_192_768}]},
+    {"name": "gemma3:4b",     "description": "Google Gemma 3 4B — compact, accurate", "pulls": 2_000_000, "tags": [{"name": "4b",  "size": 3_221_225_472}]},
+    {"name": "gemma3:12b",    "description": "Google Gemma 3 12B — balanced quality", "pulls": 900_000, "tags": [{"name": "12b", "size": 8_053_063_680}]},
+    {"name": "deepseek-r1:7b","description": "DeepSeek R1 7B — reasoning-optimised", "pulls": 700_000, "tags": [{"name": "7b",  "size": 4_831_838_208}]},
+]
+
+
 def _fetch_ollama_search(limit: int = 50) -> tuple[list[dict], bool]:
     """Fetch the Ollama model library catalog.
 
     Returns (models_list, reachable).
-    Ollama search API: GET https://ollama.com/api/search?q=&limit=N&sort=newest
+    Ollama search API: GET https://ollama.com/api/search?q=&limit=N&sort=popular
     Each entry: { name, description, pulls, tags: [{name, size}], updated_at }
+    Falls back to _OLLAMA_STATIC_CATALOG when the network is unreachable.
     """
     try:
         resp = _disc_httpx.get(
             "https://ollama.com/api/search",
-            params={"q": "", "limit": limit, "sort": "newest"},
+            params={"q": "", "limit": limit, "sort": "popular"},
             timeout=8.0,
         )
         resp.raise_for_status()
         data = resp.json()
         # API returns list directly or {"models": [...]}
         models = data if isinstance(data, list) else data.get("models", [])
-        return models, True
+        if models:
+            return models, True
+        # Empty response — fall back to static catalog
+        logger.info("Ollama search returned empty list; using static catalog fallback")
+        return _OLLAMA_STATIC_CATALOG, False
     except Exception as exc:  # noqa: BLE001
-        logger.info("Ollama discovery unavailable: %s", exc)
-        return [], False
+        logger.info("Ollama discovery unavailable (%s); using static catalog fallback", exc)
+        return _OLLAMA_STATIC_CATALOG, False
 
 
 def _fetch_hf_text_gen(limit: int = 20, hf_token: str | None = None) -> tuple[list[dict], bool]:
@@ -574,16 +651,39 @@ def _fetch_hf_text_gen(limit: int = 20, hf_token: str | None = None) -> tuple[li
 
 
 def _score_model_name(model_name: str) -> int:
-    """Apply the same two-step lookup + suffix cap used in rank_local_models()."""
+    """Score a model name for structured JSON extraction fitness (1–10).
+
+    Three-step lookup:
+    1. Exact match in _OLLAMA_TASK_FIT (handles tagged variants like qwen2.5:7b).
+    2. Exact family match (strip tag, compare key families like "qwen2.5" == "qwen2.5").
+    3. Prefix match via _FAMILY_PREFIX_SCORES — handles HuggingFace compound names like
+       "qwen3.6-27b-mtp-gguf" → prefix "qwen3.6" → score 9.
+    Finally cap specialised models (coder/embed/vision) to ≤ 4.
+    """
     base = _base_name(model_name)
-    score = _OLLAMA_TASK_FIT.get(base, 5)
-    if score == 5:
-        family = base.split(":")[0]
+    base_lower = base.lower()
+
+    # Step 1: exact lookup
+    score = _OLLAMA_TASK_FIT.get(base, None)
+
+    # Step 2: exact family match (strip tag from both sides)
+    if score is None:
+        family = base_lower.split(":")[0]
         for key, val in _OLLAMA_TASK_FIT.items():
             if family == key.split(":")[0]:
                 score = val
                 break
-    base_lower = base.lower()
+
+    # Step 3: prefix match for compound HF names — first prefix match wins
+    if score is None:
+        for prefix, val in _FAMILY_PREFIX_SCORES:
+            if base_lower.startswith(prefix):
+                score = val
+                break
+
+    score = score if score is not None else 5  # neutral default
+
+    # Cap specialised models regardless of lookup result
     if any(base_lower.endswith(sfx) or sfx in base_lower for sfx in _SPECIALISED_SUFFIXES):
         score = min(score, 4)
     return score

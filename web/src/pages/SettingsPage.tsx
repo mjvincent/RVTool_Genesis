@@ -87,6 +87,8 @@ export default function SettingsPage() {
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverResult, setDiscoverResult] = useState<DiscoveryResponse | null>(null);
   const [discoverError, setDiscoverError] = useState('');
+  // Pull state: keyed by model name → { pct: 0-100, status, error }
+  const [pullState, setPullState] = useState<Record<string, { pct: number; status: string; error?: string }>>({});
 
   // Benchmark state
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
@@ -206,6 +208,52 @@ export default function SettingsPage() {
       setDiscoverError('Could not reach the discovery endpoint.');
     } finally {
       setDiscoverLoading(false);
+    }
+  }
+
+  async function pullOllamaModel(modelName: string) {
+    setPullState(prev => ({ ...prev, [modelName]: { pct: 0, status: 'Starting…' } }));
+    try {
+      const body = await api.settings.pullModelFetch(modelName);
+      if (!body) throw new Error('No response body');
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.replace(/^data:\s*/, '').trim();
+          if (!trimmed) continue;
+          try {
+            const evt = JSON.parse(trimmed);
+            const total = evt.total ?? 0;
+            const completed = evt.completed ?? 0;
+            const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+            if (evt.status === 'success') {
+              setPullState(prev => ({ ...prev, [modelName]: { pct: 100, status: 'success' } }));
+              // Refresh advisor + discovery to show the newly installed model
+              await loadAdvisor(true);
+              await runDiscovery(true);
+              return;
+            }
+            if (evt.error || evt.status === 'error') {
+              setPullState(prev => ({ ...prev, [modelName]: { pct: 0, status: 'error', error: evt.error || 'Pull failed' } }));
+              return;
+            }
+            const label = evt.digest
+              ? `${evt.status} — ${pct}%`
+              : evt.status;
+            setPullState(prev => ({ ...prev, [modelName]: { pct, status: label } }));
+          } catch { /* skip malformed line */ }
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Pull failed';
+      setPullState(prev => ({ ...prev, [modelName]: { pct: 0, status: 'error', error: msg } }));
     }
   }
 
@@ -556,6 +604,7 @@ export default function SettingsPage() {
                 {advisor.installed_models.length >= 1 && (
                   <div style={{ marginTop: '1rem', borderTop: '1px solid #d0e2ff', paddingTop: '0.75rem' }}>
                     <button
+                      id="advisor-benchmark-toggle"
                       onClick={() => { setBenchmarkOpen(o => !o); setBenchmarkResult(null); setBenchmarkError(''); }}
                       style={{ fontSize: '0.8125rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
                     >
@@ -824,57 +873,146 @@ export default function SettingsPage() {
 
                       {discoverResult && !discoverLoading && (
                         <>
-                          {/* Registry reachability hints */}
-                          {(!discoverResult.sources_reachable['ollama'] || !discoverResult.sources_reachable['huggingface']) && (
-                            <p style={{ fontSize: '0.75rem', color: '#916a00', margin: '0 0 0.5rem', background: '#fdf6e3', border: '1px solid #f1c40f', borderRadius: 3, padding: '0.35rem 0.6rem' }}>
-                              {!discoverResult.sources_reachable['ollama'] && !discoverResult.sources_reachable['huggingface']
-                                ? 'Neither Ollama.com nor HuggingFace Hub were reachable — results may be empty.'
-                                : !discoverResult.sources_reachable['ollama']
-                                  ? 'Ollama.com was unreachable — showing HuggingFace results only.'
-                                  : 'HuggingFace Hub was unreachable — showing Ollama results only.'}
+                          {/* Registry reachability notice */}
+                          {!discoverResult.sources_reachable['ollama'] && (
+                            <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.5rem', background: '#f4f4f4', border: '1px solid #e0e0e0', borderRadius: 3, padding: '0.35rem 0.6rem' }}>
+                              Ollama.com unreachable from container — showing curated catalog. Results are still accurate; live registry data would include newest community models.
                             </p>
+                          )}
+
+                          {/* ── Currently installed reference row ── */}
+                          {discoverResult.current_model && (
+                            <div style={{ marginBottom: '0.5rem' }}>
+                              <p style={{ fontSize: '0.75rem', fontWeight: 600, color: '#525252', margin: '0 0 0.3rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Currently installed</p>
+                              <div style={{ background: '#f0f4ff', border: '2px solid #0043ce', borderRadius: 4, padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                <code style={{ fontSize: '0.875rem', fontWeight: 700, color: '#0043ce' }}>{discoverResult.current_model}</code>
+                                <span style={{ fontSize: '0.75rem', background: '#0043ce', color: '#fff', padding: '0.1rem 0.4rem', borderRadius: 3 }}>ACTIVE</span>
+                                {discoverResult.current_task_fit !== null && (
+                                  <span style={{ fontSize: '0.75rem', color: '#525252' }}>
+                                    task-fit: <strong style={{ color: discoverResult.current_task_fit >= 8 ? '#198038' : discoverResult.current_task_fit >= 6 ? '#916a00' : '#da1e28' }}>{discoverResult.current_task_fit}</strong>/10
+                                  </span>
+                                )}
+                                <span style={{ fontSize: '0.75rem', color: '#525252', marginLeft: 'auto' }}>benchmark baseline</span>
+                              </div>
+                            </div>
                           )}
 
                           {discoverResult.discovered.length === 0 ? (
                             <p style={{ fontSize: '0.8125rem', color: '#525252', margin: 0 }}>
-                              No new models found — all known candidates are already installed, or the registries were unreachable.
+                              All known candidates are already installed.
                             </p>
                           ) : (
                             <>
-                              <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.5rem' }}>
-                                Models not yet installed, ranked by task-fit score. Your system has <strong>{discoverResult.ram_gb} GB</strong> RAM.
+                              <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.4rem' }}>
+                                Candidates ranked by task-fit score — {discoverResult.ram_gb} GB RAM available.
+                                {discoverResult.current_task_fit !== null && ` Models scoring above ${discoverResult.current_task_fit} improve on your current setup.`}
                               </p>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                                {discoverResult.discovered.map((m: DiscoveredModel) => (
-                                  <div key={m.name} style={{
-                                    background: '#fff',
-                                    border: `1px solid ${m.fits_in_ram ? '#d0e2ff' : '#ffd2d2'}`,
-                                    borderRadius: 4,
-                                    padding: '0.5rem 0.75rem',
-                                    opacity: m.fits_in_ram ? 1 : 0.75,
-                                  }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.2rem' }}>
-                                      <code style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#0043ce' }}>{m.name}</code>
-                                      <span style={{ fontSize: '0.75rem', background: m.source === 'ollama' ? '#e0e8ff' : '#e8f5e9', color: m.source === 'ollama' ? '#0043ce' : '#198038', padding: '0.1rem 0.35rem', borderRadius: 3 }}>
-                                        {m.source}
-                                      </span>
-                                      {m.size_gb > 0 && (
-                                        <span style={{ fontSize: '0.75rem', color: '#6f6f6f' }}>{m.size_gb} GB</span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {discoverResult.discovered.map((m: DiscoveredModel) => {
+                                  const ps = pullState[m.name];
+                                  const isPulling = ps && ps.status !== 'success' && ps.status !== 'error';
+                                  const isPulled = ps?.status === 'success';
+                                  const pullError = ps?.status === 'error' ? ps.error : undefined;
+                                  const betterThanCurrent = discoverResult.current_task_fit !== null && m.task_fit > discoverResult.current_task_fit;
+                                  const sameCurrent = discoverResult.current_task_fit !== null && m.task_fit === discoverResult.current_task_fit;
+
+                                  return (
+                                    <div key={m.name} style={{
+                                      background: '#fff',
+                                      border: `1px solid ${betterThanCurrent ? '#a7f3d0' : m.fits_in_ram ? '#d0e2ff' : '#ffd2d2'}`,
+                                      borderRadius: 4,
+                                      padding: '0.6rem 0.75rem',
+                                      opacity: m.fits_in_ram ? 1 : 0.7,
+                                    }}>
+                                      {/* ── header row ── */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.3rem' }}>
+                                        <code style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#161616' }}>{m.name}</code>
+                                        <span style={{ fontSize: '0.6875rem', background: m.source === 'ollama' ? '#e0e8ff' : '#e8f5e9', color: m.source === 'ollama' ? '#0043ce' : '#198038', padding: '0.1rem 0.35rem', borderRadius: 3, fontWeight: 600 }}>
+                                          {m.source}
+                                        </span>
+                                        {m.size_gb > 0 && <span style={{ fontSize: '0.75rem', color: '#6f6f6f' }}>{m.size_gb} GB</span>}
+                                        {!m.fits_in_ram && <span style={{ fontSize: '0.75rem', color: '#da1e28' }}>⚠ may exceed RAM</span>}
+                                        {/* task-fit bar */}
+                                        <span style={{ fontSize: '0.75rem', color: '#525252', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                          task-fit:&nbsp;
+                                          <strong style={{ color: m.task_fit >= 9 ? '#198038' : m.task_fit >= 7 ? '#0043ce' : m.task_fit >= 5 ? '#525252' : '#da1e28' }}>
+                                            {m.task_fit}
+                                          </strong>/10
+                                          {betterThanCurrent && <span style={{ background: '#d1fae5', color: '#065f46', fontSize: '0.6875rem', padding: '0 0.3rem', borderRadius: 3, fontWeight: 600 }}>▲ better</span>}
+                                          {sameCurrent && <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.6875rem', padding: '0 0.3rem', borderRadius: 3 }}>= same</span>}
+                                        </span>
+                                        {m.pull_count > 0 && <span style={{ fontSize: '0.75rem', color: '#6f6f6f', marginLeft: 'auto' }}>{(m.pull_count / 1_000_000).toFixed(1)}M pulls</span>}
+                                      </div>
+
+                                      {/* description */}
+                                      {m.description && (
+                                        <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.35rem', lineHeight: 1.4 }}>{m.description}</p>
                                       )}
-                                      {!m.fits_in_ram && (
-                                        <span style={{ fontSize: '0.75rem', color: '#da1e28' }}>⚠ may exceed RAM</span>
+
+                                      {/* pull command + action row */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                        <code style={{ fontSize: '0.75rem', color: '#161616', userSelect: 'all', flexGrow: 1 }}>{m.pull_command}</code>
+
+                                        {/* Pull button — only for ollama source models */}
+                                        {m.source === 'ollama' && !isPulled && (
+                                          <button
+                                            onClick={() => pullOllamaModel(m.name)}
+                                            disabled={isPulling}
+                                            style={{
+                                              fontSize: '0.75rem', padding: '0.25rem 0.6rem',
+                                              background: isPulling ? '#e0e8ff' : '#0043ce', color: '#fff',
+                                              border: 'none', borderRadius: 3, cursor: isPulling ? 'default' : 'pointer',
+                                              whiteSpace: 'nowrap', flexShrink: 0,
+                                            }}
+                                          >
+                                            {isPulling ? `↓ ${ps.pct}%` : '↓ Pull'}
+                                          </button>
+                                        )}
+                                        {isPulled && <span style={{ fontSize: '0.75rem', color: '#198038', fontWeight: 600, flexShrink: 0 }}>✓ Installed</span>}
+
+                                        {/* Benchmark vs current shortcut */}
+                                        {discoverResult.current_model && (
+                                          <button
+                                            onClick={() => {
+                                              setBenchmarkModelA(discoverResult.current_model!);
+                                              setBenchmarkModelABackend('ollama');
+                                              setBenchmarkModelB(m.name);
+                                              setBenchmarkModelBBackend('ollama');
+                                              setBenchmarkOpen(true);
+                                              setBenchmarkResult(null);
+                                              setBenchmarkError('');
+                                              // Scroll up to the benchmark section
+                                              setTimeout(() => {
+                                                document.getElementById('advisor-benchmark-toggle')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                              }, 100);
+                                            }}
+                                            style={{
+                                              fontSize: '0.75rem', padding: '0.25rem 0.6rem',
+                                              background: 'none', color: '#0043ce',
+                                              border: '1px solid #0043ce', borderRadius: 3,
+                                              cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                                            }}
+                                          >
+                                            ⚖ Benchmark vs {discoverResult.current_model}
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {/* pull progress bar */}
+                                      {isPulling && ps.pct > 0 && (
+                                        <div style={{ marginTop: '0.35rem', height: 4, background: '#e0e8ff', borderRadius: 2 }}>
+                                          <div style={{ height: '100%', width: `${ps.pct}%`, background: '#0043ce', borderRadius: 2, transition: 'width 0.3s' }} />
+                                        </div>
                                       )}
-                                      <span style={{ fontSize: '0.75rem', color: '#525252', marginLeft: 'auto' }}>
-                                        task-fit: <strong>{m.task_fit}</strong>/10
-                                        {m.pull_count > 0 && ` · ${(m.pull_count / 1_000_000).toFixed(1)}M pulls`}
-                                      </span>
+                                      {isPulling && ps.status && (
+                                        <p style={{ fontSize: '0.7rem', color: '#525252', margin: '0.2rem 0 0' }}>{ps.status}</p>
+                                      )}
+                                      {pullError && (
+                                        <p style={{ fontSize: '0.75rem', color: '#da1e28', margin: '0.25rem 0 0' }}>Pull failed: {pullError}</p>
+                                      )}
                                     </div>
-                                    {m.description && (
-                                      <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.25rem', lineHeight: 1.4 }}>{m.description}</p>
-                                    )}
-                                    <code style={{ fontSize: '0.75rem', color: '#161616', userSelect: 'all' }}>{m.pull_command}</code>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             </>
                           )}

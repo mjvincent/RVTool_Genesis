@@ -728,6 +728,12 @@ async def get_discover_models(
         hf_token=cfg.hf_token,
     )
 
+    installed_model_name = row.ollama_model or cfg.ollama_model
+    installed_task_fit = None
+    if installed_model_name:
+        from services.model_catalog import _score_model_name as _score
+        installed_task_fit = _score(installed_model_name)
+
     return {
         "discovered": [
             {
@@ -745,4 +751,77 @@ async def get_discover_models(
         "sources_checked": ["ollama", "huggingface"],
         "sources_reachable": sources_reachable,
         "ram_gb": ram_gb,
+        "current_model": installed_model_name,
+        "current_task_fit": installed_task_fit,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/settings/pull-model  (Ollama pull with SSE progress stream)
+# ---------------------------------------------------------------------------
+
+from fastapi.responses import StreamingResponse as _StreamingResponse
+import json as _json
+
+
+@router.post("/settings/pull-model")
+async def pull_model(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+) -> _StreamingResponse:
+    """Stream an Ollama model pull as Server-Sent Events.
+
+    Request body: { "model": "phi4" }
+
+    SSE event stream shape (one JSON object per line, prefixed "data: "):
+      data: {"status": "pulling manifest"}
+      data: {"status": "downloading", "digest": "sha256:...", "total": 4294967296, "completed": 1073741824}
+      data: {"status": "success"}
+      data: {"status": "error", "error": "model not found"}
+
+    The stream ends after a {"status": "success"} or {"status": "error"} event.
+    """
+    from core.config import settings as cfg
+
+    model_name = (body.get("model") or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=422, detail="model field is required")
+
+    row = await _get_or_create_row(db)
+    base_url = row.ollama_base_url or cfg.ollama_base_url
+
+    async def _event_stream():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    f"{base_url}/api/pull",
+                    json={"name": model_name, "stream": True},
+                ) as resp:
+                    if resp.status_code != 200:
+                        payload = _json.dumps({"status": "error", "error": f"Ollama returned HTTP {resp.status_code}"})
+                        yield f"data: {payload}\n\n"
+                        return
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = _json.loads(line)
+                        except ValueError:
+                            continue
+                        yield f"data: {_json.dumps(obj)}\n\n"
+                        if obj.get("status") in ("success", "error"):
+                            return
+        except Exception as exc:  # noqa: BLE001
+            payload = _json.dumps({"status": "error", "error": str(exc)})
+            yield f"data: {payload}\n\n"
+
+    return _StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
