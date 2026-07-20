@@ -11,6 +11,21 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.6.2] — 2025-07-21
+
+### Fixed
+- **Benchmark scorer false negatives** — Small models produced artificially low accuracy
+  scores (e.g. phi4-mini at 35.7%) due to three legitimate-but-unhandled output variations:
+  (1) flattened JSON — model emits top-level `cpus`/`memory_mb` instead of `vinfo.cpus`/
+  `vinfo.memory_mb`; (2) key aliasing — model emits `num_cpus` instead of `cpus`;
+  (3) GB-as-MB — model returns `memory_mb: 32` (GB) instead of `memory_mb: 32768` (MB)
+  despite the prompt instruction. All three are now accepted as correct. Wrong values
+  (e.g. cpus=4 when expected=8) are still rejected.
+  (`api/services/model_benchmarker.py` — `_FIELD_ALIASES`, `_resolve_field()`,
+  `score_response()` numeric tolerance)
+
+---
+
 ## [1.6.1] — 2025-07-21
 
 ### Added
