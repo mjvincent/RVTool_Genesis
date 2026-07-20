@@ -11,6 +11,52 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.6.1] — 2025-07-21
+
+### Added
+- **Ollama Pull from Discovery** — Each discovered model card now has a **↓ Pull** button
+  (Ollama-source models only). Clicking it streams the Ollama `/api/pull` response as
+  Server-Sent Events, displaying a live progress bar (`↓ 42%`) and status line. On
+  completion the Installed Models list and discovery results refresh automatically.
+  (`api/routers/settings.py` — `POST /api/settings/pull-model`;
+  `web/src/pages/SettingsPage.tsx` — `pullOllamaModel()`)
+
+- **Benchmark shortcut from Discovery** — Every discovered model card has an
+  **⚖ Benchmark vs phi4-mini** button that pre-fills the Compare Models selectors with
+  the current active model as Model A and the candidate as Model B, opens the Compare
+  Models panel, and scrolls to it.
+  (`web/src/pages/SettingsPage.tsx`)
+
+- **Current model reference row** — The Discover Models section now shows the active
+  Ollama model (e.g. `phi4-mini`) as a pinned reference row with its task-fit score, so
+  discovered candidates can be compared at a glance. Candidates scoring higher are
+  highlighted with a green `▲ better` badge and green border.
+  (`api/routers/settings.py` — `current_model` + `current_task_fit` added to response;
+  `web/src/api/client.ts` — `DiscoveryResponse` updated;
+  `web/src/pages/SettingsPage.tsx`)
+
+### Fixed
+- **Discovery scoring always 5/10** — `_score_model_name()` was missing a prefix-match
+  step for HuggingFace compound names. `qwen3.6-27b-mtp-gguf` now scores 9,
+  `deepseek-v4-gguf` scores 9, `gemma-4-26b-it-gguf` scores 8 (was all 5).
+  Added `_FAMILY_PREFIX_SCORES` ordered prefix table and rewrote the three-step lookup.
+  (`api/services/model_catalog.py`)
+
+- **Discovery empty when Ollama.com unreachable** — Docker containers cannot route to
+  `ollama.com` by default, leaving the discovery list empty. Added
+  `_OLLAMA_STATIC_CATALOG` (14 curated entries: phi4, qwen3:8b, qwen3:14b, qwen2.5:7b,
+  qwen2.5:14b, llama3.2:3b, llama3.3, mistral-small, mistral-nemo, gemma3:4b, gemma3:12b,
+  deepseek-r1:7b, etc.) used as fallback when the live API is unreachable. Changed sort
+  from `newest` → `popular` so live results surface well-known models first.
+  (`api/services/model_catalog.py`)
+
+- **Missing model families in task-fit table** — Added `qwen3`, `qwen3.6`, `llama3/4`,
+  `gemma4`, `deepseek-v3/v4/r1/r2`, `mistral-small`, `command-r` and `gemma-4`/`gemma-3`
+  hyphenated HuggingFace prefix variants to `_OLLAMA_TASK_FIT` and `_FAMILY_PREFIX_SCORES`.
+  (`api/services/model_catalog.py`)
+
+---
+
 ## [1.6.0] — 2025-07-21
 
 ### Added
