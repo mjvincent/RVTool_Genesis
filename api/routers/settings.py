@@ -17,9 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
 from db.models import LLMSettings
-from schemas.settings import LLMSettingsResponse, LLMSettingsSave, LLMTestResult, _mask
+from schemas.settings import (
+    LLMSettingsResponse, LLMSettingsSave, LLMTestResult, _mask,
+    BenchmarkRequest, BenchmarkResult, BenchmarkCaseResult, ModelResult,
+)
 from services.crypto import decrypt, encrypt
-from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion
+from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion, resolve_gguf
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,8 @@ def _row_to_response(row: LLMSettings) -> LLMSettingsResponse:
         openai_model=row.openai_model,
         anthropic_api_key_hint=_mask(row.anthropic_api_key_enc),
         anthropic_model=row.anthropic_model,
+        dmr_base_url=getattr(row, "dmr_base_url", None),
+        dmr_model=getattr(row, "dmr_model", None),
         previous_model=row.previous_model,
         updated_at=row.updated_at,
     )
@@ -119,6 +124,12 @@ async def save_settings(
         row.anthropic_api_key_enc = encrypt(payload.anthropic_api_key) if payload.anthropic_api_key else None
     if payload.anthropic_model is not None:
         row.anthropic_model = payload.anthropic_model or None
+
+    # Docker Model Runner
+    if payload.dmr_base_url is not None:
+        row.dmr_base_url = payload.dmr_base_url or None
+    if payload.dmr_model is not None:
+        row.dmr_model = payload.dmr_model or None
 
     await db.commit()
     await db.refresh(row)
@@ -547,3 +558,123 @@ async def get_local_advisor(
 
     _advisor_cache[cache_key] = {**result, "_ts": now}
     return result
+
+
+# ---------------------------------------------------------------------------
+# POST /api/settings/benchmark-models
+# ---------------------------------------------------------------------------
+
+import asyncio as _benchmark_asyncio
+
+# Module-level lock: prevents two benchmark runs from saturating the LLM
+# backend simultaneously.  Benchmark runs sequentially by design.
+_benchmark_lock = _benchmark_asyncio.Lock()
+
+
+@router.post("/settings/benchmark-models", response_model=BenchmarkResult)
+async def benchmark_models(
+    req: BenchmarkRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BenchmarkResult:
+    """Run the fixed 8-case corpus through two models and return a scored comparison.
+
+    Scoring is 50% accuracy + 50% speed (ceiling 30 s per record).
+    Both models run fully before the response is returned — expect 30–120 s total
+    depending on hardware and model sizes.
+
+    model_a_backend / model_b_backend: "ollama" (default) or "docker_model_runner".
+    Setting both to different backends for the same model enables pure runtime
+    speed comparisons (e.g. Ollama phi4-mini vs Docker Model Runner phi4-mini).
+    """
+    if _benchmark_lock.locked():
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(
+            status_code=409,
+            detail="A benchmark is already running. Wait for it to complete before starting another.",
+        )
+
+    from core.config import settings as cfg
+    from services.model_benchmarker import (
+        run_benchmark, make_recommendation, CaseResult as _CaseResult,
+    )
+
+    row = await _get_or_create_row(db)
+    ollama_url = row.ollama_base_url or cfg.ollama_base_url
+    # DMR URL will use the saved value once Sub-Task 3.1 adds the column;
+    # fall back to the well-known default in the meantime.
+    dmr_url: str = getattr(row, "dmr_base_url", None) or "http://host.docker.internal:9545"
+
+    async with _benchmark_lock:
+        # Run both models in the thread pool so we don't block the event loop
+        loop = _benchmark_asyncio.get_running_loop()
+
+        result_a = await loop.run_in_executor(
+            None,
+            run_benchmark,
+            req.model_a, req.model_a_backend, ollama_url, dmr_url,
+        )
+        result_b = await loop.run_in_executor(
+            None,
+            run_benchmark,
+            req.model_b, req.model_b_backend, ollama_url, dmr_url,
+        )
+
+    winner_key, recommendation = make_recommendation(result_a, result_b)
+
+    def _to_model_result(r) -> ModelResult:
+        return ModelResult(
+            name=r.name,
+            backend=r.backend,
+            composite_score=r.composite_score,
+            accuracy_pct=r.accuracy_pct,
+            speed_score=r.speed_score,
+            avg_latency_ms=r.avg_latency_ms,
+            reachable=r.reachable,
+            cases=[
+                BenchmarkCaseResult(
+                    case_id=c.case_id,
+                    description=c.description,
+                    valid_json=c.valid_json,
+                    field_results=c.field_results,
+                    passed=c.passed,
+                    total=c.total,
+                    latency_ms=c.latency_ms,
+                    error=c.error,
+                )
+                for c in r.cases
+            ],
+        )
+
+    return BenchmarkResult(
+        model_a=_to_model_result(result_a),
+        model_b=_to_model_result(result_b),
+        winner=winner_key,
+        recommendation=recommendation,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/settings/resolve-gguf
+# ---------------------------------------------------------------------------
+
+@router.get("/settings/resolve-gguf")
+async def resolve_gguf_endpoint(model: str) -> dict:
+    """Query HuggingFace Hub for the best GGUF quantization for a given model name.
+
+    Response shape:
+      {
+        found: bool,
+        hf_repo: str | null,       # e.g. "microsoft/Phi-4-mini-instruct-GGUF"
+        gguf_file: str | null,     # e.g. "Phi-4-mini-instruct-Q4_K_M.gguf"
+        pull_command: str | null,  # e.g. "docker model pull hf.co/microsoft/..."
+        size_gb: float | null,
+      }
+
+    Results are cached in-process for 1 hour.
+    """
+    if not model or not model.strip():
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=422, detail="model query parameter is required")
+
+    from core.config import settings as cfg
+    return resolve_gguf(model.strip(), hf_token=cfg.hf_token)

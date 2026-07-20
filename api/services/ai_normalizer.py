@@ -1101,6 +1101,35 @@ def _call_openai(prompt_text: str, settings_row: "LLMSettings") -> str:  # type:
     return resp.json()["choices"][0]["message"]["content"]
 
 
+def _call_docker_model_runner(prompt_text: str, settings_row: "LLMSettings") -> str:  # type: ignore[name-defined]
+    """Call Docker Model Runner via its OpenAI-compatible /v1/chat/completions endpoint.
+
+    Docker Model Runner runs on port 9545 (Docker Desktop ≥ 4.25) and exposes
+    the same API surface as OpenAI.  No API key is required for local use.
+    """
+    base_url = (getattr(settings_row, "dmr_base_url", None) or "http://host.docker.internal:9545").rstrip("/")
+    model = getattr(settings_row, "dmr_model", None) or ""
+    if not model:
+        raise ValueError("Docker Model Runner model not configured — set it in Settings.")
+
+    resp = httpx.post(
+        f"{base_url}/v1/chat/completions",
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": f"Server data:\n{prompt_text}"},
+            ],
+            "temperature": 0,
+            "max_tokens": 3000,
+        },
+        headers={"Content-Type": "application/json"},
+        timeout=_OLLAMA_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
 def _call_anthropic(prompt_text: str, settings_row: "LLMSettings") -> str:  # type: ignore[name-defined]
     """Call Anthropic Claude via /v1/messages."""
     api_key = _decrypt_safe(settings_row.anthropic_api_key_enc)
@@ -1185,6 +1214,11 @@ def _call_llm(raw_data: dict) -> tuple[str, dict]:
     if provider == "anthropic" and row:
         logger.info("LLM dispatch → anthropic (%s)", row.anthropic_model or "claude-3-haiku")
         return _call_anthropic(prompt_text, row), {}
+
+    if provider == "docker_model_runner" and row:
+        dmr_model = getattr(row, "dmr_model", None) or ""
+        logger.info("LLM dispatch → docker_model_runner (%s)", dmr_model or "unconfigured")
+        return _call_docker_model_runner(prompt_text, row), {}
 
     # Default: Ollama
     logger.info("LLM dispatch → ollama (%s)", settings.ollama_model)

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # The default is intentionally weak — it works out of the box for Ollama-only use.
     secret_key: str = "rvtool-genesis-change-me-in-production"
 
+    # Optional HuggingFace API token — used by the GGUF resolver for higher rate limits.
+    # Public models work without it; set HF_TOKEN in .env for private models or heavy use.
+    hf_token: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

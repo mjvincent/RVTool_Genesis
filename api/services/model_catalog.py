@@ -181,22 +181,65 @@ def get_catalog_models(provider: str) -> list[ModelEntry]:
 # ---------------------------------------------------------------------------
 
 # Task-fit score: how well each Ollama model handles structured JSON extraction.
-# Higher = better. Models not listed default to 1.
+# Higher = better. Models not in this table default to 5 (neutral/unknown).
+#
+# Scoring rationale:
+#   9–10  Instruction-tuned generalist models proven accurate and fast on this task
+#    7–8  Capable generalists; adequate but not optimal
+#    5–6  Neutral/unknown — benign generalists without a known track record here
+#    3–4  Specialised models (code, vision, math) that are NOT tuned for JSON extraction
+#    1–2  Embedding / feature-extraction models — cannot generate text at all
+#
+# IMPORTANT: Code-specialised models (qwen2.5-coder, codellama, deepseek-coder, etc.)
+# must be listed explicitly with low scores.  The prefix-match fallback in
+# rank_local_models() would otherwise promote them to their parent family's high score.
 _OLLAMA_TASK_FIT: dict[str, int] = {
-    "phi4":           10,
-    "phi4-mini":       9,
-    "qwen2.5":         9,
-    "qwen2.5:7b":      9,
-    "qwen2.5:14b":    10,
-    "qwen2.5:32b":    10,
-    "llama3.1":        7,
-    "llama3.2":        7,
-    "llama3.3":        8,
-    "mistral":         7,
-    "mistral-nemo":    8,
-    "gemma2":          6,
-    "gemma3":          7,
+    # --- Tier 1: excellent structured-extraction models ---
+    "phi4":              10,
+    "phi4-mini":          9,
+    "qwen2.5:14b":       10,
+    "qwen2.5:32b":       10,
+    "qwen2.5:7b":         9,
+    "qwen2.5":            9,   # generic tag fallback for untagged qwen2.5
+    # --- Tier 2: capable generalists ---
+    "llama3.3":           8,
+    "mistral-nemo":       8,
+    "llama3.1":           7,
+    "llama3.2":           7,
+    "mistral":            7,
+    "gemma3":             7,
+    "gemma2":             6,
+    # --- Code-specialised models — NOT suited for JSON extraction ---
+    "qwen2.5-coder":      3,
+    "qwen2.5-coder:1.5b": 3,
+    "qwen2.5-coder:7b":   3,
+    "qwen2.5-coder:14b":  3,
+    "qwen2.5-coder:32b":  3,
+    "codellama":          3,
+    "deepseek-coder":     3,
+    "starcoder":          3,
+    "starcoder2":         3,
+    "codegemma":          3,
+    "codeqwen":           3,
+    # --- Embedding / feature-extraction models — cannot generate text ---
+    "nomic-embed-text":   1,
+    "nomic-embed":        1,
+    "mxbai-embed-large":  1,
+    "mxbai-embed":        1,
+    "all-minilm":         1,
+    "snowflake-arctic-embed": 1,
+    "bge-m3":             1,
+    "bge-large":          1,
 }
+
+# Name fragments that always cap task_fit to 4, regardless of the lookup table.
+# Guards against future unknown specialised models inheriting a high family score
+# via the prefix-match fallback in rank_local_models().
+_SPECIALISED_SUFFIXES: tuple[str, ...] = (
+    "-coder", "-code", "-embed", "-embedding",
+    "-vision", "-vl", "-ocr", "-math",
+    "starcoder",
+)
 
 # Approximate RAM required (GB) per model family+size.
 # Used to flag models that won't fit in available RAM.
@@ -266,13 +309,28 @@ def rank_local_models(
         size_gb = size_bytes / (1024 ** 3)
 
         base = _base_name(name)
-        task_fit = _OLLAMA_TASK_FIT.get(base, 1)
-        # Also try matching just the family prefix (e.g. "qwen2.5" from "qwen2.5:14b")
-        if task_fit == 1:
+
+        # Step 1: exact lookup; unknown models default to 5 (neutral), not 1.
+        task_fit = _OLLAMA_TASK_FIT.get(base, 5)
+
+        # Step 2: prefix-match fallback for tagged variants not in the table
+        # (e.g. "qwen2.5:3b" → inherits "qwen2.5" score of 9).
+        # Only fires when the exact lookup returned the neutral default (5).
+        if task_fit == 5:
+            family = base.split(":")[0]  # strip tag, e.g. "qwen2.5:3b" → "qwen2.5"
             for key, score in _OLLAMA_TASK_FIT.items():
-                if base.startswith(key) or key.startswith(base.split(":")[0]):
+                key_family = key.split(":")[0]
+                # Match on stripped family name only — never partial substring match.
+                # "qwen2.5-coder" must NOT match "qwen2.5".
+                if family == key_family:
                     task_fit = score
                     break
+
+        # Step 3: cap specialised models regardless of what the table says.
+        # Catches any future *-coder, *-embed, *-vision variants not yet in the table.
+        base_lower = base.lower()
+        if any(base_lower.endswith(sfx) or sfx in base_lower for sfx in _SPECIALISED_SUFFIXES):
+            task_fit = min(task_fit, 4)
 
         # RAM fit: use known map first, fall back to actual model file size × 1.2 headroom
         known_ram = _OLLAMA_RAM_GB.get(base) or _OLLAMA_RAM_GB.get(name)
@@ -305,9 +363,19 @@ def get_pull_suggestion(installed_names: list[str], ram_gb: float) -> dict[str, 
     Returns None if a good model (task_fit >= 8) is already installed.
     """
     installed_bases = {_base_name(n) for n in installed_names}
-    # Check if any installed model already has high task fit
+    # Check if any installed model already has high task fit.
+    # Use the same two-step lookup as rank_local_models() so the decision is consistent.
     for base in installed_bases:
-        fit = _OLLAMA_TASK_FIT.get(base, 1)
+        fit = _OLLAMA_TASK_FIT.get(base, 5)
+        if fit == 5:
+            family = base.split(":")[0]
+            for key, score in _OLLAMA_TASK_FIT.items():
+                if family == key.split(":")[0]:
+                    fit = score
+                    break
+        base_lower = base.lower()
+        if any(base_lower.endswith(sfx) or sfx in base_lower for sfx in _SPECIALISED_SUFFIXES):
+            fit = min(fit, 4)
         if fit >= 8:
             return None  # already have a good one
 
@@ -317,3 +385,114 @@ def get_pull_suggestion(installed_names: list[str], ram_gb: float) -> dict[str, 
             return suggestion
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# HuggingFace Hub GGUF resolver
+# ---------------------------------------------------------------------------
+
+import time as _time
+import httpx as _httpx
+
+_gguf_cache: dict[str, dict] = {}    # { model_name: { ...result, "_ts": float } }
+_GGUF_CACHE_TTL = 3_600              # 1 hour
+
+# Preferred quantization levels in priority order
+_PREFERRED_QUANTS = ("Q4_K_M", "Q5_K_M", "Q4_0", "Q8_0")
+
+
+def resolve_gguf(model_name: str, hf_token: str | None = None) -> dict:
+    """Query HuggingFace Hub to find the best GGUF quantization for a model.
+
+    Returns a dict with keys:
+      found (bool), hf_repo (str), gguf_file (str),
+      pull_command (str), size_gb (float | None)
+
+    Results are cached for 1 hour.
+    """
+    cache_key = model_name.lower().strip()
+    now = _time.time()
+
+    # Return cached result if fresh
+    if cache_key in _gguf_cache:
+        cached = _gguf_cache[cache_key]
+        if now - cached.get("_ts", 0) < _GGUF_CACHE_TTL:
+            return {k: v for k, v in cached.items() if k != "_ts"}
+
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+
+    result: dict = {"found": False, "hf_repo": None, "gguf_file": None, "pull_command": None, "size_gb": None}
+
+    try:
+        resp = _httpx.get(
+            "https://huggingface.co/api/models",
+            params={"search": model_name, "filter": "gguf", "limit": 10},
+            headers=headers,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        models = resp.json()
+
+        if not models:
+            _gguf_cache[cache_key] = {**result, "_ts": now}
+            return result
+
+        # Pick the best repo: prefer repos whose id contains the model name
+        best_repo: dict | None = None
+        for m in models:
+            repo_id: str = m.get("id", "")
+            # Normalise both for comparison: lowercase, strip common suffixes
+            name_norm = cache_key.replace(":", "-").replace("/", "-")
+            if name_norm in repo_id.lower() or cache_key in repo_id.lower():
+                best_repo = m
+                break
+        if best_repo is None:
+            best_repo = models[0]  # fall back to first result
+
+        repo_id = best_repo.get("id", "")
+        siblings: list[dict] = best_repo.get("siblings", [])
+
+        # Find the best GGUF file by preferred quantization
+        chosen_file: str | None = None
+        chosen_size: float | None = None
+        for quant in _PREFERRED_QUANTS:
+            for s in siblings:
+                fname: str = s.get("rfilename", "")
+                if fname.endswith(".gguf") and quant in fname:
+                    chosen_file = fname
+                    # size in bytes → GB (may be None)
+                    blob_size = s.get("size")
+                    chosen_size = round(blob_size / (1024 ** 3), 1) if blob_size else None
+                    break
+            if chosen_file:
+                break
+
+        # If no preferred quant found, pick the first .gguf
+        if not chosen_file:
+            for s in siblings:
+                fname = s.get("rfilename", "")
+                if fname.endswith(".gguf"):
+                    chosen_file = fname
+                    blob_size = s.get("size")
+                    chosen_size = round(blob_size / (1024 ** 3), 1) if blob_size else None
+                    break
+
+        if chosen_file:
+            result = {
+                "found": True,
+                "hf_repo": repo_id,
+                "gguf_file": chosen_file,
+                "pull_command": f"docker model pull hf.co/{repo_id}",
+                "size_gb": chosen_size,
+            }
+        else:
+            result = {"found": False, "hf_repo": repo_id, "gguf_file": None, "pull_command": None, "size_gb": None}
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GGUF resolver failed for %r: %s", model_name, exc)
+        result = {"found": False, "hf_repo": None, "gguf_file": None, "pull_command": None, "size_gb": None, "error": str(exc)}
+
+    _gguf_cache[cache_key] = {**result, "_ts": now}
+    return result

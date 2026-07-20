@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
-ProviderLiteral = Literal["ollama", "watsonx", "openai", "anthropic"]
+ProviderLiteral = Literal["ollama", "watsonx", "openai", "anthropic", "docker_model_runner"]
 
 
 def _mask(value: str | None) -> str | None:
@@ -43,6 +43,10 @@ class LLMSettingsSave(BaseModel):
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
 
+    # Docker Model Runner
+    dmr_base_url: str | None = None
+    dmr_model: str | None = None
+
 
 class LLMSettingsResponse(BaseModel):
     """Payload returned by GET /api/settings — keys are masked."""
@@ -67,6 +71,10 @@ class LLMSettingsResponse(BaseModel):
     anthropic_api_key_hint: str | None
     anthropic_model: str | None
 
+    # Docker Model Runner
+    dmr_base_url: str | None
+    dmr_model: str | None
+
     # Model recommendation rollback
     previous_model: str | None = None
 
@@ -81,3 +89,46 @@ class LLMTestResult(BaseModel):
     latency_ms: int | None = None
     preview: str | None = None      # first 120 chars of model response
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Model benchmark schemas
+# ---------------------------------------------------------------------------
+
+BackendLiteral = Literal["ollama", "docker_model_runner"]
+
+
+class BenchmarkRequest(BaseModel):
+    model_a: str
+    model_a_backend: BackendLiteral = "ollama"
+    model_b: str
+    model_b_backend: BackendLiteral = "ollama"
+
+
+class BenchmarkCaseResult(BaseModel):
+    case_id: int
+    description: str
+    valid_json: bool
+    field_results: dict[str, bool] = {}
+    passed: int = 0
+    total: int = 0
+    latency_ms: float = 0.0
+    error: str | None = None
+
+
+class ModelResult(BaseModel):
+    name: str
+    backend: str
+    composite_score: float      # 0–100, 50% accuracy + 50% speed
+    accuracy_pct: float         # 0–100
+    speed_score: float          # 0–100, ceiling 30 s
+    avg_latency_ms: float
+    reachable: bool
+    cases: list[BenchmarkCaseResult] = []
+
+
+class BenchmarkResult(BaseModel):
+    model_a: ModelResult
+    model_b: ModelResult
+    winner: Literal["model_a", "model_b", "tie"]
+    recommendation: str

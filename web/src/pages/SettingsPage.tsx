@@ -8,9 +8,14 @@ import {
   InlineNotification,
   InlineLoading,
   Tag,
+  Select,
+  SelectItem,
 } from '@carbon/react';
 import { Settings as SettingsIcon } from '@carbon/icons-react';
-import { api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation, LocalAdvisorResponse } from '../api/client';
+import {
+  api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation,
+  LocalAdvisorResponse, BenchmarkResult, BackendType,
+} from '../api/client';
 
 // ─── defaults ────────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -63,15 +68,31 @@ export default function SettingsPage() {
   const [antKeyHint, setAntKeyHint] = useState<string | null>(null);
   const [antModel, setAntModel] = useState(DEFAULTS.anthropic_model);
 
+  // Docker Model Runner
+  const [dmrBaseUrl, setDmrBaseUrl] = useState('http://host.docker.internal:9545');
+  const [dmrModel, setDmrModel] = useState('');
+
   // Model recommendation state
   const [recommendation, setRecommendation] = useState<ModelRecommendation | null>(null);
   const [previousModel, setPreviousModel] = useState<string | null>(null);
   const [recLoading, setRecLoading] = useState(false);
 
-  // Local Advisor state (Sub-Task A)
+  // Local Advisor state
   const [advisor, setAdvisor] = useState<LocalAdvisorResponse | null>(null);
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const [advisorError, setAdvisorError] = useState('');
+
+  // Benchmark state
+  const [benchmarkOpen, setBenchmarkOpen] = useState(false);
+  const [benchmarkRunning, setBenchmarkRunning] = useState(false);
+  const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkResult | null>(null);
+  const [benchmarkError, setBenchmarkError] = useState('');
+  const [benchmarkModelA, setBenchmarkModelA] = useState('');
+  const [benchmarkModelABackend, setBenchmarkModelABackend] = useState<BackendType>('ollama');
+  const [benchmarkModelB, setBenchmarkModelB] = useState('');
+  const [benchmarkModelBBackend, setBenchmarkModelBBackend] = useState<BackendType>('ollama');
+  const [ggufResult, setGgufResult] = useState<{ found: boolean; hf_repo: string | null; gguf_file: string | null; pull_command: string | null; size_gb: number | null } | null>(null);
+  const [ggufLoading, setGgufLoading] = useState(false);
 
   // UI state
   const [saving, setSaving] = useState(false);
@@ -94,6 +115,8 @@ export default function SettingsPage() {
     setOaiModel(s.openai_model || DEFAULTS.openai_model);
     setAntKeyHint(s.anthropic_api_key_hint);
     setAntModel(s.anthropic_model || DEFAULTS.anthropic_model);
+    setDmrBaseUrl(s.dmr_base_url || 'http://host.docker.internal:9545');
+    setDmrModel(s.dmr_model || '');
     setPreviousModel(s.previous_model);
   }
 
@@ -118,10 +141,52 @@ export default function SettingsPage() {
     try {
       const data = await api.settings.getLocalAdvisor(refresh);
       setAdvisor(data);
+      // Pre-fill benchmark selectors when advisor loads
+      if (data.installed_models.length >= 1) {
+        setBenchmarkModelA(data.current_model || data.installed_models[0].name);
+      }
+      if (data.installed_models.length >= 2) {
+        const second = data.installed_models.find(m => m.name !== (data.current_model || data.installed_models[0].name));
+        if (second) setBenchmarkModelB(second.name);
+      }
     } catch {
       setAdvisorError('Could not reach the advisor endpoint.');
     } finally {
       setAdvisorLoading(false);
+    }
+  }
+
+  async function runBenchmark() {
+    if (!benchmarkModelA || !benchmarkModelB) return;
+    setBenchmarkRunning(true);
+    setBenchmarkError('');
+    setBenchmarkResult(null);
+    try {
+      const result = await api.settings.benchmarkModels({
+        model_a: benchmarkModelA,
+        model_a_backend: benchmarkModelABackend,
+        model_b: benchmarkModelB,
+        model_b_backend: benchmarkModelBBackend,
+      });
+      setBenchmarkResult(result);
+    } catch (e: unknown) {
+      setBenchmarkError(e instanceof Error ? e.message : 'Benchmark failed');
+    } finally {
+      setBenchmarkRunning(false);
+    }
+  }
+
+  async function lookupGguf(modelName: string) {
+    if (!modelName.trim()) return;
+    setGgufLoading(true);
+    setGgufResult(null);
+    try {
+      const r = await api.settings.resolveGguf(modelName.trim());
+      setGgufResult(r);
+    } catch {
+      setGgufResult({ found: false, hf_repo: null, gguf_file: null, pull_command: null, size_gb: null });
+    } finally {
+      setGgufLoading(false);
     }
   }
 
@@ -175,6 +240,9 @@ export default function SettingsPage() {
     p.openai_model = oaiModel || null;
     if (antKey) p.anthropic_api_key = antKey;
     p.anthropic_model = antModel || null;
+    // Docker Model Runner
+    p.dmr_base_url = dmrBaseUrl || null;
+    p.dmr_model = dmrModel || null;
     return p;
   }
 
@@ -222,6 +290,16 @@ export default function SettingsPage() {
       </div>
     );
   }
+
+  // ── table style helpers (used in benchmark scorecard) ──────────────────────
+  const thStyle: React.CSSProperties = {
+    padding: '0.35rem 0.5rem', textAlign: 'left', fontWeight: 600,
+    fontSize: '0.75rem', borderBottom: '1px solid #d0e2ff',
+  };
+  const tdStyle: React.CSSProperties = {
+    padding: '0.3rem 0.5rem', borderBottom: '1px solid #e8ecff',
+    fontSize: '0.8125rem', color: '#161616',
+  };
 
   return (
     <>
@@ -317,6 +395,7 @@ export default function SettingsPage() {
             />
             <RadioButton labelText="OpenAI-compatible (OpenAI, Azure OpenAI, vLLM)" value="openai" id="prov-openai" />
             <RadioButton labelText="Anthropic (Claude)" value="anthropic" id="prov-anthropic" />
+            <RadioButton labelText="Docker Model Runner (local — Docker Desktop ≥ 4.25)" value="docker_model_runner" id="prov-dmr" />
           </RadioButtonGroup>
         </section>
 
@@ -352,7 +431,39 @@ export default function SettingsPage() {
           </section>
         )}
 
-        {/* ── Local AI Advisor card (Sub-Task A) ───────────────────── */}
+        {/* ── Docker Model Runner fields ───────────────────────────── */}
+        {provider === 'docker_model_runner' && (
+          <section style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.5rem', color: '#161616' }}>
+              Docker Model Runner configuration
+            </h2>
+            <p style={{ color: '#525252', marginBottom: '1.25rem', fontSize: '0.875rem', lineHeight: 1.6 }}>
+              Requires Docker Desktop ≥ 4.25 with Model Runner enabled.
+              Pull a model first: <code>docker model pull ai/phi4-mini</code>
+              {' or '}
+              <code>docker model pull hf.co/&lt;org&gt;/&lt;model&gt;-GGUF</code>.
+              The endpoint is OpenAI-compatible — no API key required.
+            </p>
+            <TextInput
+              id="dmr-url"
+              labelText="Docker Model Runner URL"
+              value={dmrBaseUrl}
+              onChange={e => setDmrBaseUrl(e.target.value)}
+              placeholder="http://host.docker.internal:9545"
+              style={{ marginBottom: '1rem' }}
+            />
+            <TextInput
+              id="dmr-model"
+              labelText="Model name"
+              value={dmrModel}
+              onChange={e => setDmrModel(e.target.value)}
+              placeholder="ai/phi4-mini or hf.co/microsoft/Phi-4-mini-instruct-GGUF"
+              helperText="Enter the model name exactly as shown in 'docker model list'"
+            />
+          </section>
+        )}
+
+        {/* ── Local AI Advisor card ─────────────────────────────────── */}
         {provider === 'ollama' && (
           <section style={{ marginBottom: '1.5rem', border: '1px solid #d0e2ff', borderRadius: 4, background: '#f0f4ff', padding: '1rem 1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -419,6 +530,244 @@ export default function SettingsPage() {
                     <code style={{ fontSize: '0.8125rem', color: '#161616', display: 'block', marginTop: '0.25rem' }}>
                       ollama pull {advisor.pull_suggestion.model}
                     </code>
+                  </div>
+                )}
+
+                {/* ── Compare Models toggle ─────────────────────────── */}
+                {advisor.installed_models.length >= 1 && (
+                  <div style={{ marginTop: '1rem', borderTop: '1px solid #d0e2ff', paddingTop: '0.75rem' }}>
+                    <button
+                      onClick={() => { setBenchmarkOpen(o => !o); setBenchmarkResult(null); setBenchmarkError(''); }}
+                      style={{ fontSize: '0.8125rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                    >
+                      {benchmarkOpen ? '▲ Hide Compare Models' : '▼ Compare Models'}
+                    </button>
+
+                    {benchmarkOpen && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.75rem' }}>
+                          Runs 8 synthetic server records through both models and scores accuracy + speed equally.
+                          <br />
+                          <strong>Score = 50% accuracy + 50% speed</strong> (speed ceiling: 30 s/record → score 0).
+                          Expect 1–3 min total run time.
+                        </p>
+
+                        {/* Model selectors */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '0.75rem' }}>
+                          <div>
+                            <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem', color: '#161616' }}>
+                              Model A
+                            </label>
+                            <Select
+                              id="bm-model-a"
+                              labelText=""
+                              hideLabel
+                              value={benchmarkModelA}
+                              onChange={e => setBenchmarkModelA(e.target.value)}
+                              size="sm"
+                            >
+                              {advisor.installed_models.map(m => (
+                                <SelectItem key={m.name} value={m.name} text={m.name} />
+                              ))}
+                            </Select>
+                            <Select
+                              id="bm-backend-a"
+                              labelText="Backend"
+                              value={benchmarkModelABackend}
+                              onChange={e => setBenchmarkModelABackend(e.target.value as BackendType)}
+                              size="sm"
+                              style={{ marginTop: '0.35rem' }}
+                            >
+                              <SelectItem value="ollama" text="Ollama" />
+                              <SelectItem value="docker_model_runner" text="Docker Model Runner" />
+                            </Select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '0.75rem', fontWeight: 600, display: 'block', marginBottom: '0.25rem', color: '#161616' }}>
+                              Model B
+                            </label>
+                            <Select
+                              id="bm-model-b"
+                              labelText=""
+                              hideLabel
+                              value={benchmarkModelB}
+                              onChange={e => setBenchmarkModelB(e.target.value)}
+                              size="sm"
+                            >
+                              <SelectItem value="" text="— select model —" />
+                              {advisor.installed_models.map(m => (
+                                <SelectItem key={m.name} value={m.name} text={m.name} />
+                              ))}
+                            </Select>
+                            <Select
+                              id="bm-backend-b"
+                              labelText="Backend"
+                              value={benchmarkModelBBackend}
+                              onChange={e => { setBenchmarkModelBBackend(e.target.value as BackendType); setGgufResult(null); }}
+                              size="sm"
+                              style={{ marginTop: '0.35rem' }}
+                            >
+                              <SelectItem value="ollama" text="Ollama" />
+                              <SelectItem value="docker_model_runner" text="Docker Model Runner" />
+                            </Select>
+
+                            {/* Find on HuggingFace — shown when DMR backend selected */}
+                            {benchmarkModelBBackend === 'docker_model_runner' && (
+                              <div style={{ marginTop: '0.5rem' }}>
+                                <button
+                                  onClick={() => lookupGguf(benchmarkModelB || benchmarkModelA)}
+                                  disabled={ggufLoading}
+                                  style={{ fontSize: '0.8125rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                                >
+                                  {ggufLoading ? 'Looking up…' : '🔍 Find on HuggingFace'}
+                                </button>
+                                {ggufResult && (
+                                  <div style={{ marginTop: '0.4rem', fontSize: '0.75rem', background: '#fff', border: '1px solid #d0e2ff', borderRadius: 3, padding: '0.4rem 0.6rem' }}>
+                                    {ggufResult.found ? (
+                                      <>
+                                        <div style={{ color: '#198038', fontWeight: 600, marginBottom: '0.2rem' }}>Found: {ggufResult.hf_repo}</div>
+                                        {ggufResult.size_gb && <div style={{ color: '#525252' }}>Size: ~{ggufResult.size_gb} GB ({ggufResult.gguf_file})</div>}
+                                        <div style={{ marginTop: '0.3rem' }}>
+                                          <code style={{ userSelect: 'all', color: '#161616', fontSize: '0.75rem' }}>{ggufResult.pull_command}</code>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <span style={{ color: '#da1e28' }}>No GGUF found on HuggingFace Hub for this model name.</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <Button
+                          kind="primary"
+                          size="sm"
+                          onClick={runBenchmark}
+                          disabled={benchmarkRunning || !benchmarkModelA || !benchmarkModelB}
+                        >
+                          {benchmarkRunning ? 'Running…' : 'Run Benchmark'}
+                        </Button>
+
+                        {benchmarkRunning && (
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <InlineLoading description="Benchmarking both models — this may take 1–3 minutes…" />
+                          </div>
+                        )}
+
+                        {benchmarkError && !benchmarkRunning && (
+                          <InlineNotification
+                            kind="error"
+                            title="Benchmark failed"
+                            subtitle={benchmarkError}
+                            lowContrast
+                            style={{ marginTop: '0.75rem' }}
+                          />
+                        )}
+
+                        {/* ── Scorecard ─────────────────────────────── */}
+                        {benchmarkResult && !benchmarkRunning && (() => {
+                          const a = benchmarkResult.model_a;
+                          const b = benchmarkResult.model_b;
+                          const winnerLabel =
+                            benchmarkResult.winner === 'model_a' ? a.name
+                            : benchmarkResult.winner === 'model_b' ? b.name
+                            : 'Tie';
+                          const winnerKind = benchmarkResult.winner === 'tie' ? 'gray' : 'green';
+
+                          return (
+                            <div style={{ marginTop: '1rem' }}>
+                              {/* Winner badge + recommendation */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                                <Tag type={winnerKind} size="md">
+                                  {benchmarkResult.winner === 'tie' ? 'Tie' : `Winner: ${winnerLabel}`}
+                                </Tag>
+                              </div>
+                              <InlineNotification
+                                kind="info"
+                                title=""
+                                subtitle={benchmarkResult.recommendation}
+                                lowContrast
+                                style={{ marginBottom: '0.75rem' }}
+                              />
+
+                              {/* Summary table */}
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+                                <thead>
+                                  <tr style={{ background: '#e0e8ff' }}>
+                                    <th style={thStyle}>Metric</th>
+                                    <th style={thStyle}>{a.name}{a.backend !== 'ollama' ? ` (${a.backend})` : ''}</th>
+                                    <th style={thStyle}>{b.name}{b.backend !== 'ollama' ? ` (${b.backend})` : ''}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr style={{ background: '#f0f4ff' }}>
+                                    <td style={tdStyle}><strong>Composite score</strong></td>
+                                    <td style={{ ...tdStyle, fontWeight: 700, color: benchmarkResult.winner === 'model_a' ? '#198038' : '#161616' }}>{a.composite_score}</td>
+                                    <td style={{ ...tdStyle, fontWeight: 700, color: benchmarkResult.winner === 'model_b' ? '#198038' : '#161616' }}>{b.composite_score}</td>
+                                  </tr>
+                                  <tr>
+                                    <td style={tdStyle}>Accuracy</td>
+                                    <td style={tdStyle}>{a.accuracy_pct.toFixed(1)}%</td>
+                                    <td style={tdStyle}>{b.accuracy_pct.toFixed(1)}%</td>
+                                  </tr>
+                                  <tr>
+                                    <td style={tdStyle}>Speed score</td>
+                                    <td style={tdStyle}>{a.speed_score.toFixed(1)}</td>
+                                    <td style={tdStyle}>{b.speed_score.toFixed(1)}</td>
+                                  </tr>
+                                  <tr>
+                                    <td style={tdStyle}>Avg latency</td>
+                                    <td style={tdStyle}>{(a.avg_latency_ms / 1000).toFixed(1)} s</td>
+                                    <td style={tdStyle}>{(b.avg_latency_ms / 1000).toFixed(1)} s</td>
+                                  </tr>
+                                  <tr>
+                                    <td style={tdStyle}>Reachable</td>
+                                    <td style={tdStyle}>{a.reachable ? '✓' : '✗'}</td>
+                                    <td style={tdStyle}>{b.reachable ? '✓' : '✗'}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+
+                              {/* Per-case detail */}
+                              <details style={{ marginTop: '0.75rem' }}>
+                                <summary style={{ fontSize: '0.8125rem', cursor: 'pointer', color: '#0043ce' }}>
+                                  Per-case detail ({a.cases.length} cases)
+                                </summary>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+                                  <thead>
+                                    <tr style={{ background: '#e0e8ff' }}>
+                                      <th style={thStyle}>#</th>
+                                      <th style={thStyle}>Case</th>
+                                      <th style={thStyle}>{a.name} passed/total</th>
+                                      <th style={thStyle}>{a.name} latency</th>
+                                      <th style={thStyle}>{b.name} passed/total</th>
+                                      <th style={thStyle}>{b.name} latency</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {a.cases.map((ac, i) => {
+                                      const bc = b.cases[i];
+                                      return (
+                                        <tr key={ac.case_id} style={{ background: i % 2 === 0 ? '#f9fbff' : '#fff' }}>
+                                          <td style={tdStyle}>{ac.case_id}</td>
+                                          <td style={{ ...tdStyle, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ac.description}>{ac.description}</td>
+                                          <td style={{ ...tdStyle, color: ac.passed === ac.total ? '#198038' : '#da1e28' }}>{ac.passed}/{ac.total}</td>
+                                          <td style={tdStyle}>{(ac.latency_ms / 1000).toFixed(1)} s</td>
+                                          <td style={{ ...tdStyle, color: bc?.passed === bc?.total ? '#198038' : '#da1e28' }}>{bc?.passed ?? '—'}/{bc?.total ?? '—'}</td>
+                                          <td style={tdStyle}>{bc ? `${(bc.latency_ms / 1000).toFixed(1)} s` : '—'}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </details>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                 )}
               </>

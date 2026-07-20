@@ -55,7 +55,9 @@ def validate_rvtools_xlsx(file_bytes: bytes) -> dict:
     sheets_found = wb.sheetnames
 
     # ------------------------------------------------------------------
-    # 1. Exactly the 4 required sheets — no more, no less.
+    # 1. Required sheets must be present; extra sheets are permitted.
+    #    Real RVTools exports contain 20+ sheets — the IBM import tool
+    #    only reads the 4 required ones and ignores the rest.
     # ------------------------------------------------------------------
     missing = [s for s in REQUIRED_SHEETS if s not in sheets_found]
     extra = [s for s in sheets_found if s not in REQUIRED_SHEETS]
@@ -63,7 +65,7 @@ def validate_rvtools_xlsx(file_bytes: bytes) -> dict:
     if missing:
         errors.append(f"Missing required sheets: {missing}")
     if extra:
-        errors.append(f"Unexpected extra sheets: {extra}")
+        warnings.append(f"Extra sheets present (ignored by IBM import tool): {extra}")
 
     # ------------------------------------------------------------------
     # 2. Per-sheet header and data-row checks.

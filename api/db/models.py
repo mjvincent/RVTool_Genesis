@@ -245,6 +245,12 @@ class LLMSettings(Base):
         String, nullable=True, default="claude-3-haiku-20240307"
     )
 
+    # Docker Model Runner (OpenAI-compatible inference endpoint, port 9545)
+    dmr_base_url: Mapped[str | None] = mapped_column(
+        String, nullable=True, default="http://host.docker.internal:9545"
+    )
+    dmr_model: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Model recommendation rollback support
     previous_model: Mapped[str | None] = mapped_column(Text, nullable=True)
     recommendation_snoozed_until: Mapped[datetime | None] = mapped_column(nullable=True)

@@ -101,7 +101,7 @@ export interface ExportRecord {
   created_at: string;
 }
 
-export type LLMProvider = 'ollama' | 'watsonx' | 'openai' | 'anthropic';
+export type LLMProvider = 'ollama' | 'watsonx' | 'openai' | 'anthropic' | 'docker_model_runner';
 
 export interface LLMSettingsResponse {
   provider: LLMProvider;
@@ -116,6 +116,8 @@ export interface LLMSettingsResponse {
   openai_model: string | null;
   anthropic_api_key_hint: string | null;
   anthropic_model: string | null;
+  dmr_base_url: string | null;
+  dmr_model: string | null;
   previous_model: string | null;
   updated_at: string;
 }
@@ -164,6 +166,8 @@ export interface LLMSettingsSave {
   openai_model?: string | null;
   anthropic_api_key?: string | null;
   anthropic_model?: string | null;
+  dmr_base_url?: string | null;
+  dmr_model?: string | null;
 }
 
 export interface LLMTestResult {
@@ -172,6 +176,48 @@ export interface LLMTestResult {
   latency_ms: number | null;
   preview: string | null;
   error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Model benchmark interfaces
+// ---------------------------------------------------------------------------
+
+export type BackendType = 'ollama' | 'docker_model_runner';
+
+export interface BenchmarkRequest {
+  model_a: string;
+  model_a_backend?: BackendType;
+  model_b: string;
+  model_b_backend?: BackendType;
+}
+
+export interface BenchmarkCaseResult {
+  case_id: number;
+  description: string;
+  valid_json: boolean;
+  field_results: Record<string, boolean>;
+  passed: number;
+  total: number;
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface ModelResult {
+  name: string;
+  backend: string;
+  composite_score: number;
+  accuracy_pct: number;
+  speed_score: number;
+  avg_latency_ms: number;
+  reachable: boolean;
+  cases: BenchmarkCaseResult[];
+}
+
+export interface BenchmarkResult {
+  model_a: ModelResult;
+  model_b: ModelResult;
+  winner: 'model_a' | 'model_b' | 'tie';
+  recommendation: string;
 }
 
 export const api = {
@@ -370,6 +416,20 @@ export const api = {
       fetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }).then(r => r.json()),
     getLocalAdvisor: (refresh = false): Promise<LocalAdvisorResponse> =>
       fetch(`${BASE}/settings/local-advisor${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
+    resolveGguf: (model: string): Promise<{ found: boolean; hf_repo: string | null; gguf_file: string | null; pull_command: string | null; size_gb: number | null; error?: string }> =>
+      fetch(`${BASE}/settings/resolve-gguf?model=${encodeURIComponent(model)}`).then(r => r.json()),
+    benchmarkModels: (req: BenchmarkRequest): Promise<BenchmarkResult> =>
+      fetch(`${BASE}/settings/benchmark-models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+      }).then(async r => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: 'Benchmark failed' }));
+          throw new Error(err.detail || 'Benchmark failed');
+        }
+        return r.json();
+      }),
   },
 
   pricingTemplate: {

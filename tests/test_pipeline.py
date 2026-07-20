@@ -258,10 +258,11 @@ def test_generator_and_validator() -> None:
     result = validate_rvtools_xlsx(xlsx_bytes)
 
     assert result["valid"] is True, f"Validation errors: {result['errors']}"
-    assert set(result["sheets"]) == {"vInfo", "vNetwork", "vPartition", "vHost"}
+    # The generator produces all 22 RVTools sheets; extra sheets are permitted (warnings, not errors)
+    assert {"vInfo", "vNetwork", "vPartition", "vHost"}.issubset(set(result["sheets"]))
     assert result["errors"] == []
-    # vHost only has 1 data row; the other sheets also have 1 each — no empty-sheet warnings
-    assert result["warnings"] == []
+    # Extra sheets produce a warning — confirm no "no data rows" warnings fired on required sheets
+    assert not any("no data rows" in w for w in result["warnings"])
 
 
 # ---------------------------------------------------------------------------
