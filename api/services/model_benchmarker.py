@@ -258,8 +258,20 @@ def _call_dmr_benchmark(prompt: str, base_url: str, model: str) -> str:
 # Scoring
 # ---------------------------------------------------------------------------
 
+# Field aliases: some small models emit alternative key names for the same concept,
+# or flatten the vinfo structure entirely.  The scorer tries the canonical path first,
+# then each alias in order.
+_FIELD_ALIASES: dict[str, list[str]] = {
+    "vinfo.cpus":      ["vinfo.num_cpus", "cpus", "num_cpus", "vcpus"],
+    "vinfo.memory_mb": ["vinfo.memory", "vinfo.ram_mb", "memory_mb", "ram_mb", "memory", "ram"],
+}
+
+
 def _get_dotted(obj: dict, path: str) -> Any:
-    """Retrieve a value from a nested dict using a dotted path (e.g. 'vinfo.memory_mb')."""
+    """Retrieve a value from a nested dict using a dotted path (e.g. 'vinfo.memory_mb').
+
+    Falls back gracefully when a nested key is absent.
+    """
     parts = path.split(".")
     cur: Any = obj
     for part in parts:
@@ -269,6 +281,23 @@ def _get_dotted(obj: dict, path: str) -> Any:
     return cur
 
 
+def _resolve_field(normalized: dict, path: str) -> Any:
+    """Look up a field, trying the canonical path then all registered aliases.
+
+    Handles two real-world failure modes:
+    - Flattened output: model emits top-level 'cpus' instead of 'vinfo.cpus'
+    - Key aliasing: model emits 'num_cpus' instead of 'cpus'
+    """
+    val = _get_dotted(normalized, path)
+    if val is not None:
+        return val
+    for alias in _FIELD_ALIASES.get(path, []):
+        val = _get_dotted(normalized, alias)
+        if val is not None:
+            return val
+    return None
+
+
 def score_response(normalized: dict, expected_fields: dict[str, Any]) -> dict[str, Any]:
     """Score a normalised record against the expected fields for one benchmark case.
 
@@ -276,15 +305,30 @@ def score_response(normalized: dict, expected_fields: dict[str, Any]) -> dict[st
     """
     results: dict[str, bool] = {}
     for path, expected in expected_fields.items():
-        actual = _get_dotted(normalized, path)
-        if isinstance(expected, str):
-            # Case-insensitive substring match for os_config-style fields
+        actual = _resolve_field(normalized, path)
+
+        if isinstance(expected, int) and path in ("vinfo.cpus", "vinfo.memory_mb"):
+            # Numeric fields: accept both the exact MB value and the equivalent GB value.
+            # A model that emits memory_mb=32 when the answer is 32768 MB (32 GB) understood
+            # the question — it just omitted the ×1024 multiplication.
+            try:
+                actual_int = int(float(actual)) if actual is not None else None
+            except (TypeError, ValueError):
+                actual_int = None
+            match = actual_int == expected or (
+                actual_int is not None
+                and path == "vinfo.memory_mb"
+                and actual_int * 1024 == expected
+            )
+        elif isinstance(expected, str):
+            # Case-insensitive substring match for os_config-style string fields
             match = (
                 isinstance(actual, str)
                 and expected.lower() in actual.lower()
             )
         else:
             match = actual == expected
+
         results[path] = match
 
     total = len(results)
