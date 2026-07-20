@@ -66,7 +66,7 @@ in this project without re-implementing profile selection in TypeScript.
 - `api/services/vpc_calculator_generator.py` lines 115-154 — `_select_vpc_profile`
 - `web/src/api/client.ts` line 229 — `bulkOsReplace` binding to mirror
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 ---
 
@@ -107,7 +107,7 @@ per updated record.
 - `api/services/vpc_calculator_generator.py` lines 57-63 — `_NXF_PROFILES` for target specs
 - `db/models.py` — `Assumption` model fields
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 ---
 
@@ -141,7 +141,7 @@ and lets the user pick `nxf-2x1` or `nxf-2x2` as the replacement target.
 - `web/src/components/BulkOSModal.tsx` — direct structural model
 - `web/src/api/client.ts` — `bulkNxfReplace` binding (added in Sub-Task 2)
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 ---
 
@@ -181,7 +181,7 @@ user arrives at the review step, parallel to the existing "Bulk OS Replace" butt
 - `web/src/pages/ReviewPage.tsx` lines 139-148 — success notification pattern
 - Carbon `InlineNotification` with `actions` prop can embed a button inline
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 ---
 
@@ -194,4 +194,4 @@ user arrives at the review step, parallel to the existing "Bulk OS Replace" butt
 2. `git commit -m "feat: warn + bulk-replace unsupported nxf-1x* profiles on Review page"`
 3. `git push origin main && git push ibm main`
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`

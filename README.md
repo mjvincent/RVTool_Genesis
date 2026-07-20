@@ -137,6 +137,9 @@ All defaults are pre-configured and work without changes. Edit `.env` only if yo
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint (host Mac from inside container) |
 | `OLLAMA_MODEL` | `phi4-mini` | Ollama model to use for normalization |
+| `DMR_BASE_URL` | `http://host.docker.internal:9545` | Docker Model Runner endpoint (Docker Desktop ≥ 4.25) |
+| `DMR_MODEL` | *(empty)* | Model name for Docker Model Runner, e.g. `ai/phi4-mini` |
+| `HF_TOKEN` | *(empty)* | Optional HuggingFace token — higher rate limits for GGUF resolver |
 | `SECRET_KEY` | *(weak default)* | AES-256 key for encrypting cloud API keys in DB — **change this** before using cloud providers |
 | `DATABASE_URL` | `postgresql://rvtool:...@db:5432/rvtooldb` | PostgreSQL connection |
 | `POSTGRES_DB` | `rvtooldb` | Database name |
@@ -180,7 +183,7 @@ OrbStack / Docker Compose
 │
 │   services/
 │       ├── spreadsheet_parser        — pandas: handles any freeform .xlsx/.csv
-│       ├── ai_normalizer             — LLM dispatcher + cloud/Ollama adapters
+│       ├── ai_normalizer             — LLM dispatcher + cloud/Ollama/DMR adapters
 │       ├── crypto                    — AES-256 Fernet encryption for API keys
 │       ├── network_inference         — default subnet/gateway/NIC logic
 │       ├── rvtools_generator         — openpyxl: generates 22-sheet RVTools file
@@ -188,7 +191,8 @@ OrbStack / Docker Compose
 │       ├── vpc_calculator_generator  — openpyxl: generates 3-sheet VPC Cloud Solution Export
 │       ├── powervs_calculator_generator — generates 3-sheet PowerVS Cloud Solution Export
 │       ├── pricing_template_filler   — zip-level XML surgery: fills IBM Price Estimator
-│       ├── model_catalog             — curated LLM model catalog + upgrade recommendations
+│       ├── model_catalog             — curated LLM catalog + advisor + GGUF resolver
+│       ├── model_benchmarker         — 8-case benchmark corpus + composite scoring (50% accuracy + 50% speed)
 │       └── validator                 — structural validation for generated files
 │
 └── db :5433  (PostgreSQL 16)
@@ -203,9 +207,9 @@ OrbStack / Docker Compose
     └── llm_settings      (single-row: active provider + encrypted keys,
                            previous_model, recommendation_snoozed_until)
 
-[host Mac — NOT in Docker, only when using Ollama provider]
-└── Ollama :11434
-    └── phi4-mini  ← reached via host.docker.internal from containers
+[host Mac — NOT in Docker, only when using Ollama or Docker Model Runner]
+├── Ollama :11434          — reached via host.docker.internal from containers
+└── Docker Model Runner :9545 — built into Docker Desktop ≥ 4.25; OpenAI-compatible
 ```
 
 ---
@@ -455,6 +459,7 @@ persisted to the database — no container restart needed after switching.
 | **IBM watsonx.ai** ⭐ | IBM Cloud API key + Project ID | Recommended for IBM engagement work. Use `ibm/granite-3-8b-instruct` |
 | **OpenAI-compatible** | API key | Works with OpenAI, Azure OpenAI, local vLLM, LM Studio |
 | **Anthropic** | API key | Claude models (Haiku recommended for speed/cost) |
+| **Docker Model Runner** | No | Built into Docker Desktop ≥ 4.25. `docker model pull ai/phi4-mini` |
 
 ### Getting an IBM watsonx.ai API key
 
@@ -468,6 +473,39 @@ persisted to the database — no container restart needed after switching.
 For watsonx.ai, an IBM IAM Bearer token is obtained once and cached for 50 minutes
 (tokens expire at 60 min). This means IAM is only called once per processing run, not
 once per server record.
+
+### Local AI Advisor
+
+When Ollama is the active provider, the Settings page shows a **Local AI Advisor** card
+that reads your machine's CPU/RAM, checks installed Ollama models, and ranks them by
+task-fit score (1–10) and RAM fit. It recommends the best model and suggests an
+`ollama pull` command if a better one is available.
+
+**Model scoring tiers:**
+- **9–10** — Excellent for structured JSON extraction (`phi4`, `phi4-mini`, `qwen2.5:14b`)
+- **7–8** — Capable generalists (`llama3.3`, `mistral-nemo`)
+- **5** — Unknown/neutral models (default for anything not in the catalog)
+- **3–4** — Code-specialised models (`qwen2.5-coder`, `codellama`, `deepseek-coder`) — not suited for this task
+- **1–2** — Embedding models (`nomic-embed-text`, `mxbai-embed`) — cannot generate text
+
+### Compare Models (benchmark)
+
+The "Compare Models" section (inside the Local AI Advisor card) runs **8 synthetic
+server records** through two models and scores them equally on accuracy and speed:
+
+```
+Composite score = (accuracy_pct × 0.5) + (speed_score × 0.5)
+Speed score     = clamp(1 − avg_latency_ms / 30 000, 0, 1) × 100
+```
+
+A model that takes 15 s per record and gets everything right scores **50 + 50 = 75**.
+One that takes 3 s and gets everything right scores **50 + 90 = 95**.
+
+Both Model A and Model B can use either **Ollama** or **Docker Model Runner** as their
+backend — enabling pure runtime speed comparisons for the same model across runtimes.
+
+When Docker Model Runner is selected as Model B's backend, a **"🔍 Find on HuggingFace"**
+link queries the HuggingFace Hub API live and shows the exact `docker model pull` command.
 
 ### Model recommendations
 
@@ -495,6 +533,14 @@ provider fails.
 ## Changelog
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
+
+### v1.5.0
+
+- **Docker Model Runner** — 6th LLM provider. Built into Docker Desktop ≥ 4.25, OpenAI-compatible, no API key required.
+- **Model benchmark** — Compare any two models (Ollama or Docker Model Runner) on 8 synthetic cases; composite score = 50 % accuracy + 50 % speed. Inline scorecard in Settings.
+- **HuggingFace GGUF resolver** — `GET /api/settings/resolve-gguf?model=<name>` finds the best quantization on HF Hub and returns the `docker model pull` command.
+- **Model catalog fix** — `qwen2.5-coder` and other specialised models now score correctly (≤ 4); `phi4-mini` stays recommended.
+- **Validator fix** — Extra sheets in generated RVTools files are now warnings, not errors. All 3 previously failing tests resolved; test suite 120/120.
 
 ### v1.4.0
 - **Local AI Advisor** — Settings page ranks your installed Ollama models by task-fit and RAM fit; suggests `ollama pull` for better models.

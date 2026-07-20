@@ -11,6 +11,67 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.5.0] — 2025-07-20
+
+### Added
+- **Docker Model Runner provider** — Docker Model Runner (Docker Desktop ≥ 4.25) is now
+  a full 6th LLM provider. No API key required. Configure via the Settings page with the
+  base URL (`http://host.docker.internal:9545`) and model name (e.g. `ai/phi4-mini` or
+  `hf.co/<org>/<model>-GGUF`). Uses the OpenAI-compatible `/v1/chat/completions` API.
+  DB migration `49d19351b26a` adds `dmr_base_url` and `dmr_model` to `llm_settings`.
+  (`api/db/models.py`, `api/schemas/settings.py`, `api/services/ai_normalizer.py`,
+  `api/routers/settings.py`, `web/src/pages/SettingsPage.tsx`)
+
+- **Model benchmark feature** — New `POST /api/settings/benchmark-models` endpoint runs
+  8 synthetic server records through two LLM models and returns a scored comparison
+  report. Scoring is 50 % accuracy + 50 % speed (latency ceiling 30 s). Both models
+  can use any backend independently (Ollama or Docker Model Runner), enabling
+  same-model-different-runtime comparisons. A "Compare Models" inline section is now
+  available in the Local AI Advisor card on the Settings page: select two models, choose
+  backends, run, and get a side-by-side scorecard with winner badge and recommendation
+  sentence.
+  (`api/services/model_benchmarker.py`, `api/routers/settings.py`,
+  `api/schemas/settings.py`, `web/src/pages/SettingsPage.tsx`, `web/src/api/client.ts`)
+
+- **HuggingFace Hub GGUF resolver** — New `GET /api/settings/resolve-gguf?model=<name>`
+  endpoint queries the HuggingFace Hub API to find the best GGUF quantization
+  (Q4_K_M → Q5_K_M → Q4_0 → Q8_0 in priority) for any model name. Returns the
+  `docker model pull hf.co/...` command ready to copy. Results cached 1 hour in-process.
+  Optional `HF_TOKEN` env var for higher rate limits. When the benchmark "Compare Models"
+  section has Docker Model Runner selected as Model B's backend, a "🔍 Find on
+  HuggingFace" link appears that calls this endpoint and shows the pull command inline.
+  (`api/services/model_catalog.py`, `api/routers/settings.py`, `web/src/api/client.ts`)
+
+### Fixed
+- **Model catalog misranking bug** — `qwen2.5-coder:1.5b` and other code-specialised
+  models (`codellama`, `deepseek-coder`, `starcoder`, `codegemma`) were inheriting high
+  task-fit scores (9/10) from their parent `qwen2.5` family via a broken prefix-match
+  fallback. They now score ≤ 4 explicitly. Embedding models (`nomic-embed-text`,
+  `mxbai-embed`, `all-minilm`) score 1–2. Unknown models default to 5 (neutral) instead
+  of 1 (worst). A runtime suffix-cap guard (`_SPECIALISED_SUFFIXES`) catches any future
+  `*-coder`, `*-embed`, `*-vision`, `*-vl`, `*-math`, `*-ocr` model not yet in the table.
+  (`api/services/model_catalog.py`)
+
+- **RVTools validator over-strict on extra sheets** — The validator was rejecting generated
+  files as `valid: False` if they contained any sheets beyond the 4 IBM-required ones
+  (`vInfo`, `vNetwork`, `vPartition`, `vHost`). Real RVTools exports always contain 20+
+  sheets; the IBM import tool ignores all but the 4 required. Extra sheets are now a
+  `warnings` entry, not an `errors` entry, so `valid` correctly reflects whether the
+  required structure is present.
+  (`api/services/validator.py`)
+
+- **3 previously failing tests resolved** — `test_generator_and_validator`,
+  `test_export_before_processing_fails`, and `test_delete_project` all now pass.
+  Root cause: the validator's extra-sheet hard error caused the first test to fail,
+  which polluted fixture state and cascaded to the others. Test suite: 120/120 passing.
+
+### Tests
+- **14 new unit tests** — `tests/test_model_catalog.py` covers: coder model ranking,
+  embedding model ranking, `phi4-mini` recommended when installed alongside coder models,
+  pull suggestion suppression when a good model is installed, unknown model neutral default.
+
+---
+
 ## [1.4.0] — 2025-07-17
 
 ### Added

@@ -120,7 +120,7 @@ currently absent: `bx2-*`, `bx2d-*`, `bx3d-*`, `cx2-*`, `cx2d-*`, `cx3d-*`, `mx2
 - The exact VS values and their order were extracted directly from the IBM reference
   JSON dump at `.bob/tmp/xlsx-dumps/.../Data_Domains.json`
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 ---
 
@@ -143,4 +143,4 @@ and `ibm` (github.ibm.com).
 - Two remotes: `origin` = github.com/mjvincent/RVTool_Genesis,
   `ibm` = github.ibm.com/jonesmi/RVTool_Genesis
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
