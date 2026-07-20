@@ -14,7 +14,7 @@ import {
 import { Settings as SettingsIcon } from '@carbon/icons-react';
 import {
   api, LLMProvider, LLMSettingsResponse, LLMSettingsSave, ModelRecommendation,
-  LocalAdvisorResponse, BenchmarkResult, BackendType,
+  LocalAdvisorResponse, BenchmarkResult, BackendType, DiscoveredModel, DiscoveryResponse,
 } from '../api/client';
 
 // ─── defaults ────────────────────────────────────────────────────────────────
@@ -81,6 +81,12 @@ export default function SettingsPage() {
   const [advisor, setAdvisor] = useState<LocalAdvisorResponse | null>(null);
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const [advisorError, setAdvisorError] = useState('');
+
+  // Discover Models state
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverResult, setDiscoverResult] = useState<DiscoveryResponse | null>(null);
+  const [discoverError, setDiscoverError] = useState('');
 
   // Benchmark state
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
@@ -187,6 +193,19 @@ export default function SettingsPage() {
       setGgufResult({ found: false, hf_repo: null, gguf_file: null, pull_command: null, size_gb: null });
     } finally {
       setGgufLoading(false);
+    }
+  }
+
+  async function runDiscovery(refresh: boolean) {
+    setDiscoverLoading(true);
+    setDiscoverError('');
+    try {
+      const data = await api.settings.discoverModels(refresh);
+      setDiscoverResult(data);
+    } catch {
+      setDiscoverError('Could not reach the discovery endpoint.');
+    } finally {
+      setDiscoverLoading(false);
     }
   }
 
@@ -770,6 +789,101 @@ export default function SettingsPage() {
                     )}
                   </div>
                 )}
+
+                {/* ── Discover Models section ───────────────────────── */}
+                <div style={{ marginTop: '1rem', borderTop: '1px solid #d0e2ff', paddingTop: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <button
+                      onClick={() => {
+                        const opening = !discoverOpen;
+                        setDiscoverOpen(opening);
+                        if (opening && !discoverResult) runDiscovery(false);
+                      }}
+                      style={{ fontSize: '0.8125rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                    >
+                      {discoverOpen ? '▲ Hide Discover Models' : '🔭 Check for New Models'}
+                    </button>
+                    {discoverOpen && discoverResult && (
+                      <button
+                        onClick={() => runDiscovery(true)}
+                        disabled={discoverLoading}
+                        style={{ fontSize: '0.75rem', color: '#0043ce', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                      >
+                        ↻ Refresh
+                      </button>
+                    )}
+                  </div>
+
+                  {discoverOpen && (
+                    <div style={{ marginTop: '0.75rem' }}>
+                      {discoverLoading && <InlineLoading description="Querying model registries…" />}
+
+                      {discoverError && !discoverLoading && (
+                        <p style={{ fontSize: '0.8125rem', color: '#da1e28', margin: 0 }}>{discoverError}</p>
+                      )}
+
+                      {discoverResult && !discoverLoading && (
+                        <>
+                          {/* Registry reachability hints */}
+                          {(!discoverResult.sources_reachable['ollama'] || !discoverResult.sources_reachable['huggingface']) && (
+                            <p style={{ fontSize: '0.75rem', color: '#916a00', margin: '0 0 0.5rem', background: '#fdf6e3', border: '1px solid #f1c40f', borderRadius: 3, padding: '0.35rem 0.6rem' }}>
+                              {!discoverResult.sources_reachable['ollama'] && !discoverResult.sources_reachable['huggingface']
+                                ? 'Neither Ollama.com nor HuggingFace Hub were reachable — results may be empty.'
+                                : !discoverResult.sources_reachable['ollama']
+                                  ? 'Ollama.com was unreachable — showing HuggingFace results only.'
+                                  : 'HuggingFace Hub was unreachable — showing Ollama results only.'}
+                            </p>
+                          )}
+
+                          {discoverResult.discovered.length === 0 ? (
+                            <p style={{ fontSize: '0.8125rem', color: '#525252', margin: 0 }}>
+                              No new models found — all known candidates are already installed, or the registries were unreachable.
+                            </p>
+                          ) : (
+                            <>
+                              <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.5rem' }}>
+                                Models not yet installed, ranked by task-fit score. Your system has <strong>{discoverResult.ram_gb} GB</strong> RAM.
+                              </p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                {discoverResult.discovered.map((m: DiscoveredModel) => (
+                                  <div key={m.name} style={{
+                                    background: '#fff',
+                                    border: `1px solid ${m.fits_in_ram ? '#d0e2ff' : '#ffd2d2'}`,
+                                    borderRadius: 4,
+                                    padding: '0.5rem 0.75rem',
+                                    opacity: m.fits_in_ram ? 1 : 0.75,
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.2rem' }}>
+                                      <code style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#0043ce' }}>{m.name}</code>
+                                      <span style={{ fontSize: '0.75rem', background: m.source === 'ollama' ? '#e0e8ff' : '#e8f5e9', color: m.source === 'ollama' ? '#0043ce' : '#198038', padding: '0.1rem 0.35rem', borderRadius: 3 }}>
+                                        {m.source}
+                                      </span>
+                                      {m.size_gb > 0 && (
+                                        <span style={{ fontSize: '0.75rem', color: '#6f6f6f' }}>{m.size_gb} GB</span>
+                                      )}
+                                      {!m.fits_in_ram && (
+                                        <span style={{ fontSize: '0.75rem', color: '#da1e28' }}>⚠ may exceed RAM</span>
+                                      )}
+                                      <span style={{ fontSize: '0.75rem', color: '#525252', marginLeft: 'auto' }}>
+                                        task-fit: <strong>{m.task_fit}</strong>/10
+                                        {m.pull_count > 0 && ` · ${(m.pull_count / 1_000_000).toFixed(1)}M pulls`}
+                                      </span>
+                                    </div>
+                                    {m.description && (
+                                      <p style={{ fontSize: '0.75rem', color: '#525252', margin: '0 0 0.25rem', lineHeight: 1.4 }}>{m.description}</p>
+                                    )}
+                                    <code style={{ fontSize: '0.75rem', color: '#161616', userSelect: 'all' }}>{m.pull_command}</code>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
               </>
             )}
           </section>

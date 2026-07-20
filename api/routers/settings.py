@@ -22,7 +22,7 @@ from schemas.settings import (
     BenchmarkRequest, BenchmarkResult, BenchmarkCaseResult, ModelResult,
 )
 from services.crypto import decrypt, encrypt
-from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion, resolve_gguf
+from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion, resolve_gguf, discover_models, DiscoveredModel
 
 logger = logging.getLogger(__name__)
 
@@ -678,3 +678,71 @@ async def resolve_gguf_endpoint(model: str) -> dict:
 
     from core.config import settings as cfg
     return resolve_gguf(model.strip(), hf_token=cfg.hf_token)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/settings/discover-models
+# ---------------------------------------------------------------------------
+
+@router.get("/settings/discover-models")
+async def get_discover_models(
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Discover models from the Ollama library and HuggingFace Hub that are not
+    yet installed on the local Ollama instance.
+
+    Results are cached for 6 hours. Pass ?refresh=true to bypass the cache.
+
+    Response shape:
+      {
+        discovered: [{
+          name, source, size_gb, fits_in_ram, task_fit,
+          description, pull_count, pull_command
+        }],
+        sources_checked: ["ollama", "huggingface"],
+        sources_reachable: {"ollama": bool, "huggingface": bool},
+        ram_gb: float,
+      }
+    """
+    from core.config import settings as cfg
+
+    row = await _get_or_create_row(db)
+    base_url = row.ollama_base_url or cfg.ollama_base_url
+
+    ram_gb = _read_ram_gb()
+
+    # Fetch installed model names for deduplication
+    installed_raw = await _fetch_ollama_tags(base_url)
+    installed_names = [m.get("name", "") for m in installed_raw if m.get("name")]
+
+    # Force-clear the cache entry when refresh=True so discover_models() recomputes
+    if refresh:
+        from services.model_catalog import _discover_cache as _dc
+        cache_key = f"discover:{round(ram_gb)}"
+        _dc.pop(cache_key, None)
+
+    results, sources_reachable = discover_models(
+        installed_names=installed_names,
+        ram_gb=ram_gb,
+        hf_token=cfg.hf_token,
+    )
+
+    return {
+        "discovered": [
+            {
+                "name": r.name,
+                "source": r.source,
+                "size_gb": r.size_gb,
+                "fits_in_ram": r.fits_in_ram,
+                "task_fit": r.task_fit,
+                "description": r.description,
+                "pull_count": r.pull_count,
+                "pull_command": r.pull_command,
+            }
+            for r in results
+        ],
+        "sources_checked": ["ollama", "huggingface"],
+        "sources_reachable": sources_reachable,
+        "ram_gb": ram_gb,
+    }

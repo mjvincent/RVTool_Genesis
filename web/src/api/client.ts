@@ -153,6 +153,24 @@ export interface LocalAdvisorResponse {
   current_model: string | null;
 }
 
+export interface DiscoveredModel {
+  name: string;
+  source: 'ollama' | 'huggingface';
+  size_gb: number;
+  fits_in_ram: boolean;
+  task_fit: number;
+  description: string;
+  pull_count: number;
+  pull_command: string;
+}
+
+export interface DiscoveryResponse {
+  discovered: DiscoveredModel[];
+  sources_checked: string[];
+  sources_reachable: Record<string, boolean>;
+  ram_gb: number;
+}
+
 export interface LLMSettingsSave {
   provider: LLMProvider;
   ollama_base_url?: string | null;
@@ -430,6 +448,8 @@ export const api = {
         }
         return r.json();
       }),
+    discoverModels: (refresh = false): Promise<DiscoveryResponse> =>
+      fetch(`${BASE}/settings/discover-models${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
   },
 
   pricingTemplate: {

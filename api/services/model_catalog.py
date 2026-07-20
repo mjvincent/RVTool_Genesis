@@ -236,7 +236,7 @@ _OLLAMA_TASK_FIT: dict[str, int] = {
 # Guards against future unknown specialised models inheriting a high family score
 # via the prefix-match fallback in rank_local_models().
 _SPECIALISED_SUFFIXES: tuple[str, ...] = (
-    "-coder", "-code", "-embed", "-embedding",
+    "-coder", "-code", "-embed", "-embedding", "embedding",
     "-vision", "-vl", "-ocr", "-math",
     "starcoder",
 )
@@ -496,3 +496,226 @@ def resolve_gguf(model_name: str, hf_token: str | None = None) -> dict:
 
     _gguf_cache[cache_key] = {**result, "_ts": now}
     return result
+
+# ---------------------------------------------------------------------------
+# Proactive model discovery (Ollama library + HuggingFace Hub)
+# ---------------------------------------------------------------------------
+
+import time as _disc_time
+import httpx as _disc_httpx
+
+_discover_cache: dict[str, object] = {}   # key → {result, "_ts"}
+_DISCOVER_CACHE_TTL = 21_600             # 6 hours
+
+
+@dataclass
+class DiscoveredModel:
+    """A model available on a public registry that the user has not yet installed."""
+    name: str
+    source: str           # "ollama" | "huggingface"
+    size_gb: float
+    fits_in_ram: bool
+    task_fit: int
+    description: str
+    pull_count: int
+    pull_command: str
+
+
+def _fetch_ollama_search(limit: int = 50) -> tuple[list[dict], bool]:
+    """Fetch the Ollama model library catalog.
+
+    Returns (models_list, reachable).
+    Ollama search API: GET https://ollama.com/api/search?q=&limit=N&sort=newest
+    Each entry: { name, description, pulls, tags: [{name, size}], updated_at }
+    """
+    try:
+        resp = _disc_httpx.get(
+            "https://ollama.com/api/search",
+            params={"q": "", "limit": limit, "sort": "newest"},
+            timeout=8.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # API returns list directly or {"models": [...]}
+        models = data if isinstance(data, list) else data.get("models", [])
+        return models, True
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Ollama discovery unavailable: %s", exc)
+        return [], False
+
+
+def _fetch_hf_text_gen(limit: int = 20, hf_token: str | None = None) -> tuple[list[dict], bool]:
+    """Fetch top GGUF text-generation models from HuggingFace Hub.
+
+    Returns (models_list, reachable).
+    """
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+    try:
+        resp = _disc_httpx.get(
+            "https://huggingface.co/api/models",
+            params={
+                "task": "text-generation",
+                "filter": "gguf",
+                "sort": "downloads",
+                "direction": -1,
+                "limit": limit,
+            },
+            headers=headers,
+            timeout=8.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return (data if isinstance(data, list) else []), True
+    except Exception as exc:  # noqa: BLE001
+        logger.info("HuggingFace discovery unavailable: %s", exc)
+        return [], False
+
+
+def _score_model_name(model_name: str) -> int:
+    """Apply the same two-step lookup + suffix cap used in rank_local_models()."""
+    base = _base_name(model_name)
+    score = _OLLAMA_TASK_FIT.get(base, 5)
+    if score == 5:
+        family = base.split(":")[0]
+        for key, val in _OLLAMA_TASK_FIT.items():
+            if family == key.split(":")[0]:
+                score = val
+                break
+    base_lower = base.lower()
+    if any(base_lower.endswith(sfx) or sfx in base_lower for sfx in _SPECIALISED_SUFFIXES):
+        score = min(score, 4)
+    return score
+
+
+def discover_models(
+    installed_names: list[str],
+    ram_gb: float,
+    hf_token: str | None = None,
+) -> tuple[list[DiscoveredModel], dict[str, bool]]:
+    """Query Ollama library and HuggingFace Hub for recommended models not yet installed.
+
+    Returns (discovered_models, sources_reachable).
+    discovered_models is sorted: fits_in_ram DESC, task_fit DESC, size_gb ASC.
+    Results cached for 6 hours; force-refresh by clearing _discover_cache.
+    Network errors result in empty list — discovery is best-effort and must
+    never break the Settings page.
+
+    Models scoring ≤ 4 (code/embed/vision specialised) are excluded entirely.
+    Max 12 results returned.
+    """
+    cache_key = f"discover:{round(ram_gb)}"
+    now = _disc_time.time()
+
+    cached = _discover_cache.get(cache_key)
+    if cached and now - cached["_ts"] < _DISCOVER_CACHE_TTL:  # type: ignore[index]
+        return cached["models"], cached["sources_reachable"]  # type: ignore[index]
+
+    installed_bases = {_base_name(n) for n in installed_names}
+
+    ollama_models, ollama_ok = _fetch_ollama_search(limit=50)
+    hf_models, hf_ok = _fetch_hf_text_gen(limit=20, hf_token=hf_token)
+    sources_reachable = {"ollama": ollama_ok, "huggingface": hf_ok}
+
+    seen_names: set[str] = set()
+    results: list[DiscoveredModel] = []
+
+    # ── Process Ollama library results ──────────────────────────────────────
+    for m in ollama_models:
+        name: str = m.get("name", "").strip()
+        if not name:
+            continue
+
+        base = _base_name(name)
+        # Skip already installed
+        if base in installed_bases or name in installed_names:
+            continue
+        # Skip already in results (de-dup)
+        if base in seen_names:
+            continue
+
+        score = _score_model_name(name)
+        # Exclude specialised/embedding models entirely
+        if score <= 4:
+            continue
+
+        # Size: use smallest tag, or look up in RAM table
+        tags: list[dict] = m.get("tags", [])
+        min_size_bytes = min((t.get("size", 0) for t in tags if t.get("size")), default=0)
+        size_gb = round(min_size_bytes / (1024 ** 3), 1) if min_size_bytes else 0.0
+        if size_gb == 0.0:
+            known = _OLLAMA_RAM_GB.get(base)
+            size_gb = known if known else 0.0
+
+        fits = (ram_gb >= size_gb * 1.2) if size_gb > 0 else True
+
+        results.append(DiscoveredModel(
+            name=name,
+            source="ollama",
+            size_gb=size_gb,
+            fits_in_ram=fits,
+            task_fit=score,
+            description=(m.get("description") or "")[:120],
+            pull_count=m.get("pulls") or 0,
+            pull_command=f"ollama pull {name}",
+        ))
+        seen_names.add(base)
+
+    # ── Process HuggingFace results ─────────────────────────────────────────
+    for m in hf_models:
+        repo_id: str = m.get("id") or m.get("modelId") or ""
+        if not repo_id:
+            continue
+
+        # Derive a simple name from the repo (e.g. "Phi-4-mini-instruct-GGUF" → "phi4-mini")
+        short = repo_id.split("/")[-1].lower()
+
+        # Skip clearly low-quality HF repo names — good model repo names are short
+        # and recognizable. Long compound strings (e.g. "qwythos-9b-claude-mythos-5-1m-gguf")
+        # are fine-tuned variants, not general-purpose candidates worth suggesting.
+        if len(short) > 40 or short.count("-") > 4:
+            continue
+
+        # Try to match against a known name — if it's already covered by an Ollama result, skip
+        if any(short.startswith(s) or s in short for s in seen_names):
+            continue
+        if any(_base_name(n) in short for n in installed_names):
+            continue
+
+        score = _score_model_name(short)
+        if score <= 4:
+            continue
+
+        # Size from siblings
+        siblings: list[dict] = m.get("siblings", [])
+        gguf_sizes = [
+            s.get("size", 0) for s in siblings
+            if s.get("rfilename", "").endswith(".gguf") and s.get("size")
+        ]
+        size_bytes = min(gguf_sizes) if gguf_sizes else 0
+        size_gb = round(size_bytes / (1024 ** 3), 1) if size_bytes else 0.0
+        fits = (ram_gb >= size_gb * 1.2) if size_gb > 0 else True
+
+        results.append(DiscoveredModel(
+            name=short,
+            source="huggingface",
+            size_gb=size_gb,
+            fits_in_ram=fits,
+            task_fit=score,
+            description="",
+            pull_count=m.get("downloads") or 0,
+            pull_command=f"docker model pull hf.co/{repo_id}",
+        ))
+        seen_names.add(short.split(":")[0])
+
+    # Sort: fits-in-RAM first, then task_fit desc, then size asc
+    results.sort(key=lambda r: (0 if r.fits_in_ram else 1, -r.task_fit, r.size_gb))
+    results = results[:12]
+
+    _discover_cache[cache_key] = {
+        "models": results,
+        "sources_reachable": sources_reachable,
+        "_ts": now,
+    }
+    return results, sources_reachable

@@ -11,6 +11,27 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.6.0] — 2025-07-21
+
+### Added
+- **Model Discovery — "Check for New Models"** — The Local AI Advisor card on the Settings
+  page now contains a **"🔭 Check for New Models"** button. Clicking it queries two live
+  model registries — the **Ollama library** (`ollama.com/api/search`) and **HuggingFace Hub**
+  (`huggingface.co/api/models?filter=gguf`) — and presents a ranked list of not-yet-installed
+  models filtered to those that fit in the host's available RAM and are suited for structured
+  JSON extraction. Results include the model name, source badge (ollama / huggingface), size,
+  task-fit score (1–10), pull count, a one-line description, and a ready-to-copy
+  `ollama pull` / `docker model pull` command. Registry reachability warnings are shown if
+  either source is offline. Results are cached 6 hours in-process; a "↻ Refresh" button
+  bypasses the cache. The feature is best-effort — if both registries are unreachable the
+  page degrades gracefully with an empty list and an informational message.
+  (`api/services/model_catalog.py` — `discover_models()`, `DiscoveredModel`, helpers;
+  `api/routers/settings.py` — `GET /api/settings/discover-models`;
+  `web/src/api/client.ts` — `DiscoveredModel`, `DiscoveryResponse`, `discoverModels()`;
+  `web/src/pages/SettingsPage.tsx` — Discover Models section in Local AI Advisor card)
+
+---
+
 ## [1.5.0] — 2025-07-20
 
 ### Added
