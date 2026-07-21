@@ -1,4 +1,11 @@
-.PHONY: setup up up-d down logs migrate test test-local shell-api shell-db
+.PHONY: setup up up-d down logs migrate test test-local typecheck lint shell-api shell-db generate-secret
+
+generate-secret:
+	@echo ""
+	@echo "Add this line to your .env file:"
+	@echo ""
+	@printf "SECRET_KEY=%s\n" "$$(openssl rand -hex 32)"
+	@echo ""
 
 setup:
 	./setup.sh
@@ -23,6 +30,12 @@ test:
 
 test-local:
 	BASE_URL=http://localhost:8001 python -m pytest tests/ -v
+
+typecheck:
+	cd web && npm run typecheck
+
+lint:
+	docker compose exec api ruff check /app/ || ruff check api/
 
 shell-api:
 	docker compose exec api /bin/bash
