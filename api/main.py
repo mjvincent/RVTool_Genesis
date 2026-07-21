@@ -54,11 +54,25 @@ async def lifespan(app: FastAPI):
     """Application lifespan — startup actions run before yield, shutdown after."""
     logger.info("RVTool Genesis API starting...")
     if settings.secret_key == _DEFAULT_SECRET_KEY:
-        logger.warning(
-            "SECRET_KEY is set to the insecure default value. "
-            "Cloud LLM provider API keys stored in the database are encrypted with a "
-            "known key. Set a strong SECRET_KEY in your .env file before using "
-            "watsonx.ai, OpenAI, or Anthropic providers."
+        raise RuntimeError(
+            "\n\n"
+            "  ╔══════════════════════════════════════════════════════════════╗\n"
+            "  ║  STARTUP BLOCKED — insecure SECRET_KEY detected             ║\n"
+            "  ║                                                              ║\n"
+            "  ║  The SECRET_KEY is still set to the known default value.    ║\n"
+            "  ║  All stored cloud LLM API keys are encrypted with this key  ║\n"
+            "  ║  and can be decrypted by anyone who knows the default.      ║\n"
+            "  ║                                                              ║\n"
+            "  ║  Generate a strong key and add it to your .env file:        ║\n"
+            "  ║    make generate-secret                                     ║\n"
+            "  ║  or:                                                         ║\n"
+            "  ║    openssl rand -hex 32                                      ║\n"
+            "  ╚══════════════════════════════════════════════════════════════╝\n"
+        )
+    if len(settings.secret_key) < 32:
+        raise RuntimeError(
+            "SECRET_KEY must be at least 32 characters. "
+            "Generate one with: openssl rand -hex 32"
         )
     recommendation_task = asyncio.create_task(_recommendation_checker_loop())
     yield
