@@ -26,7 +26,9 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY package.json ./
+# Copy all files needed for both production (preview) and dev-override (npm run dev)
+COPY package.json vite.config.ts tsconfig.json index.html ./
+COPY src ./src
 
 EXPOSE 3000
 
