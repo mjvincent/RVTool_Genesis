@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # Public models work without it; set HF_TOKEN in .env for private models or heavy use.
     hf_token: str | None = None
 
+    # Optional API bearer token for shared / IBM-facing deployments.
+    # When empty (the default), all endpoints are open — suitable for home-network use.
+    # When set, every API request must include:  Authorization: Bearer <token>
+    api_token: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

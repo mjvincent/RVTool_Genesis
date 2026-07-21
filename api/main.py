@@ -2,10 +2,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from core.auth import require_token
 from core.config import settings
 from db.database import AsyncSessionLocal
 from routers.health import router as health_router
@@ -125,12 +126,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Health check is always open — used by Docker and monitoring without auth.
 app.include_router(health_router, prefix="/api")
-app.include_router(folders.router, prefix="/api")
-app.include_router(projects.router, prefix="/api")
-app.include_router(uploads.router, prefix="/api")
-app.include_router(processing.router, prefix="/api")
-app.include_router(exports.router, prefix="/api")
-app.include_router(settings_router.router, prefix="/api")
-app.include_router(backups.router, prefix="/api")
-app.include_router(pricing_template.router, prefix="/api")
+
+# All other routers are protected by the optional bearer-token dependency.
+# When API_TOKEN is not set (the default), require_token is a no-op.
+_auth = [Depends(require_token)]
+app.include_router(folders.router,           prefix="/api", dependencies=_auth)
+app.include_router(projects.router,          prefix="/api", dependencies=_auth)
+app.include_router(uploads.router,           prefix="/api", dependencies=_auth)
+app.include_router(processing.router,        prefix="/api", dependencies=_auth)
+app.include_router(exports.router,           prefix="/api", dependencies=_auth)
+app.include_router(settings_router.router,   prefix="/api", dependencies=_auth)
+app.include_router(backups.router,           prefix="/api", dependencies=_auth)
+app.include_router(pricing_template.router,  prefix="/api", dependencies=_auth)
