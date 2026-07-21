@@ -37,6 +37,39 @@ _TEST_PROMPT = (
 )
 _WATSONX_IAM_URL = "https://iam.cloud.ibm.com/identity/token"
 
+# Allowlist of approved LLM provider endpoint domains.
+# Stored credentials will never be sent to a URL whose host is not in this set.
+# "localhost" and "127.0.0.1" are permitted for local Ollama / Docker Model Runner.
+_APPROVED_ENDPOINT_HOSTS: frozenset[str] = frozenset({
+    "localhost",
+    "127.0.0.1",
+    "host.docker.internal",          # Ollama on host from inside container
+    "api.openai.com",                # OpenAI
+    "api.anthropic.com",             # Anthropic
+    "iam.cloud.ibm.com",             # IBM IAM token exchange
+    "us-south.ml.cloud.ibm.com",     # WatsonX — US South
+    "eu-de.ml.cloud.ibm.com",        # WatsonX — Frankfurt
+    "eu-gb.ml.cloud.ibm.com",        # WatsonX — London
+    "jp-tok.ml.cloud.ibm.com",       # WatsonX — Tokyo
+    "au-syd.ml.cloud.ibm.com",       # WatsonX — Sydney
+})
+
+
+def _assert_approved_endpoint(url: str, provider: str) -> None:
+    """Raise ValueError if the URL host is not in the approved endpoint allowlist.
+
+    This prevents stored cloud credentials from being forwarded to arbitrary URLs
+    that may be supplied in the test-endpoint request body.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if host not in _APPROVED_ENDPOINT_HOSTS:
+        raise ValueError(
+            f"Endpoint '{url}' is not in the approved {provider} provider list. "
+            f"Approved domains: {sorted(_APPROVED_ENDPOINT_HOSTS)}"
+        )
+
 
 async def _get_or_create_row(db: AsyncSession) -> LLMSettings:
     """Fetch the singleton settings row, creating it with Ollama defaults if absent."""
@@ -188,6 +221,7 @@ async def _test_ollama(payload: LLMSettingsSave, db: AsyncSession) -> str:
     from core.config import settings as cfg
     base_url = payload.ollama_base_url or row.ollama_base_url or cfg.ollama_base_url
     model = payload.ollama_model or row.ollama_model or cfg.ollama_model
+    _assert_approved_endpoint(base_url, "ollama")
     resp = httpx.post(
         f"{base_url}/api/generate",
         json={"model": model, "prompt": _TEST_PROMPT, "stream": False,
@@ -223,6 +257,7 @@ async def _test_watsonx(payload: LLMSettingsSave, db: AsyncSession) -> str:
         raise ValueError("watsonx Project ID is required.")
     watsonx_url = payload.watsonx_url or row.watsonx_url or "https://us-south.ml.cloud.ibm.com"
     model = payload.watsonx_model or row.watsonx_model or "ibm/granite-3-8b-instruct"
+    _assert_approved_endpoint(watsonx_url, "watsonx")
 
     token = await _get_watsonx_token(api_key)
     resp = httpx.post(
@@ -249,6 +284,7 @@ async def _test_openai(payload: LLMSettingsSave, db: AsyncSession) -> str:
         raise ValueError("No OpenAI API key provided.")
     base_url = payload.openai_base_url or row.openai_base_url or "https://api.openai.com"
     model = payload.openai_model or row.openai_model or "gpt-4o-mini"
+    _assert_approved_endpoint(base_url, "openai")
 
     resp = httpx.post(
         f"{base_url}/v1/chat/completions",
