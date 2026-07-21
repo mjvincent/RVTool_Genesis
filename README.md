@@ -110,21 +110,24 @@ docker compose down
 |---|---|---|
 | Web UI | http://localhost:3001 | React + Carbon Design System |
 | API | http://localhost:8001 | FastAPI — Swagger docs at `/api/docs` |
-| PostgreSQL | localhost:5433 | Local DB (for direct inspection) |
+| PostgreSQL | internal only | No host port — only reachable within Docker bridge network |
 
 ---
 
 ## Makefile Commands
 
 ```bash
-make up        # Start all services (docker compose up --build)
-make up-d      # Start all services detached (background)
-make down      # Stop all services
-make logs      # Tail logs from all services
-make migrate   # Run database migrations manually
-make test      # Run integration tests inside the api container
-make shell-api # Shell into the api container
-make shell-db  # psql shell into the database
+make generate-secret  # Generate a strong SECRET_KEY value
+make up               # Start all services (docker compose up --build)
+make up-d             # Start all services detached (background)
+make down             # Stop all services
+make logs             # Tail logs from all services
+make migrate          # Run database migrations manually
+make test             # Run tests inside the api container
+make typecheck        # Run TypeScript typecheck
+make lint             # Run Ruff Python linter
+make shell-api        # Shell into the api container
+make shell-db         # psql shell into the database
 ```
 
 ---
@@ -133,22 +136,24 @@ make shell-db  # psql shell into the database
 
 All defaults are pre-configured and work without changes. Edit `.env` only if you need to override:
 
-| Variable | Default | Description |
+| Variable | Required | Description |
 |---|---|---|
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint (host Mac from inside container) |
-| `OLLAMA_MODEL` | `phi4-mini` | Ollama model to use for normalization |
-| `DMR_BASE_URL` | `http://host.docker.internal:9545` | Docker Model Runner endpoint (Docker Desktop ≥ 4.25) |
-| `DMR_MODEL` | *(empty)* | Model name for Docker Model Runner, e.g. `ai/phi4-mini` |
-| `HF_TOKEN` | *(empty)* | Optional HuggingFace token — higher rate limits for GGUF resolver |
-| `SECRET_KEY` | *(weak default)* | AES-256 key for encrypting cloud API keys in DB — **change this** before using cloud providers |
-| `DATABASE_URL` | `postgresql://rvtool:...@db:5432/rvtooldb` | PostgreSQL connection |
-| `POSTGRES_DB` | `rvtooldb` | Database name |
-| `POSTGRES_USER` | `rvtool` | Database user |
-| `POSTGRES_PASSWORD` | `rvtool_password` | Database password |
+| `SECRET_KEY` | **Yes** | AES-256 key for encrypting cloud API keys in PostgreSQL. **The API will not start if this is left at the default.** Generate with `make generate-secret`. |
+| `OLLAMA_BASE_URL` | No | Ollama endpoint reached from inside containers. Default: `http://host.docker.internal:11434` |
+| `OLLAMA_MODEL` | No | Ollama model for normalization. Default: `phi4-mini` |
+| `DMR_BASE_URL` | No | Docker Model Runner endpoint. Default: `http://host.docker.internal:9545` |
+| `DMR_MODEL` | No | Model name for Docker Model Runner, e.g. `ai/phi4-mini` |
+| `HF_TOKEN` | No | HuggingFace token — higher rate limits for GGUF resolver |
+| `API_TOKEN` | No | Bearer token for API auth. Leave blank for home-network use. When set, all requests require `Authorization: Bearer <token>`. |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origins. Default: `http://localhost:3001`. Add your machine's IP for network demos. |
+| `DATABASE_URL` | No | PostgreSQL connection string. Default: `postgresql://rvtool:rvtool_password@db:5432/rvtooldb` |
+| `POSTGRES_DB` | No | Database name. Default: `rvtooldb` |
+| `POSTGRES_USER` | No | Database user. Default: `rvtool` |
+| `POSTGRES_PASSWORD` | No | Database password. Default: `rvtool_password` |
 
-Generate a strong `SECRET_KEY`:
+Generate a strong `SECRET_KEY` (required on first run):
 ```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
+make generate-secret
 ```
 
 ---
@@ -195,7 +200,7 @@ OrbStack / Docker Compose
 │       ├── model_benchmarker         — 8-case benchmark corpus + composite scoring (50% accuracy + 50% speed)
 │       └── validator                 — structural validation for generated files
 │
-└── db :5433  (PostgreSQL 16)
+└── db  (PostgreSQL 16 — internal network only, no host port)
     ├── projects          (vpc_region, vpc_datacenter, pvs_region, pvs_datacenter)
     ├── folders           (hierarchical project organisation — max depth 2)
     ├── uploads

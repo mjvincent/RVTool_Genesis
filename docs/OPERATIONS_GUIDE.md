@@ -68,28 +68,33 @@ chmod +x setup.sh       # only needed once after cloning
 All variables live in `.env` at the repo root. The file is created automatically
 by `setup.sh` from `.env.example`. You only need to edit it to override defaults.
 
-| Variable | Default | Description | Security note |
-|---|---|---|---|
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama endpoint reached from inside containers. `host.docker.internal` maps to the host Mac. | — |
-| `OLLAMA_MODEL` | `phi4-mini` | Ollama model to use for normalization. | — |
-| `SECRET_KEY` | `rvtool-genesis-change-me-in-production` | AES-256 Fernet key used to encrypt cloud LLM API keys stored in PostgreSQL. | **Change this before using cloud providers.** The default is intentionally weak and only safe for Ollama-only use. |
-| `DATABASE_URL` | `postgresql://rvtool:rvtool_password@db:5432/rvtooldb` | PostgreSQL connection string used by the API container. | Do not expose port 5433 to external networks. |
-| `POSTGRES_DB` | `rvtooldb` | PostgreSQL database name. | — |
-| `POSTGRES_USER` | `rvtool` | PostgreSQL user. | — |
-| `POSTGRES_PASSWORD` | `rvtool_password` | PostgreSQL password. | Change in production. |
+| Variable | Required | Default | Description | Security note |
+|---|---|---|---|---|
+| `SECRET_KEY` | **Yes** | *(weak default — blocked)* | AES-256 Fernet key for encrypting cloud LLM API keys in PostgreSQL. **The API refuses to start if this is set to the default or is shorter than 32 characters.** | Generate with `make generate-secret`. Rotate by re-entering cloud keys in Settings after changing. |
+| `OLLAMA_BASE_URL` | No | `http://host.docker.internal:11434` | Ollama endpoint reached from inside containers. | — |
+| `OLLAMA_MODEL` | No | `phi4-mini` | Ollama model for normalization. | — |
+| `DMR_BASE_URL` | No | `http://host.docker.internal:9545` | Docker Model Runner endpoint (Docker Desktop ≥ 4.25). | — |
+| `DMR_MODEL` | No | *(empty)* | Docker Model Runner model name, e.g. `ai/phi4-mini`. | — |
+| `HF_TOKEN` | No | *(empty)* | HuggingFace token — higher rate limits for GGUF resolver. | — |
+| `API_TOKEN` | No | *(empty — enforcement disabled)* | Bearer token for API authentication. When empty, all endpoints are open (home-network default). When set, every request must include `Authorization: Bearer <token>`. | Generate with `openssl rand -hex 32`. Also set `VITE_API_TOKEN` when rebuilding the frontend. |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3001` | Comma-separated list of CORS origins the browser may request from. Add your machine's IP for non-localhost demos: `http://localhost:3001,http://192.168.1.x:3001`. | — |
+| `DATABASE_URL` | No | `postgresql://rvtool:rvtool_password@db:5432/rvtooldb` | PostgreSQL connection string used by the API container. | Internal only — DB port is not exposed to host network. |
+| `POSTGRES_DB` | No | `rvtooldb` | PostgreSQL database name. | — |
+| `POSTGRES_USER` | No | `rvtool` | PostgreSQL user. | — |
+| `POSTGRES_PASSWORD` | No | `rvtool_password` | PostgreSQL password. | Change before any network-accessible deployment. |
 
 ### Generating a strong SECRET_KEY
 
 ```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
+make generate-secret
 ```
 
-Paste the output into `.env`:
+This prints a ready-to-paste `.env` line:
 ```
-SECRET_KEY=your-64-character-hex-string-here
+SECRET_KEY=af65ef2e010953cc...
 ```
 
-Then rebuild the API container for the new key to take effect:
+Paste that line into your `.env` file, then rebuild the API container:
 ```bash
 docker compose up --build -d api
 ```
@@ -108,9 +113,9 @@ The application is three containers managed by Docker Compose.
 
 | Service | Container name | Host port | Container port | Description |
 |---|---|---|---|---|
-| `web` | `rvtoolgenesis-web-1` | **3001** | 3000 | React + Carbon Design System UI |
-| `api` | `rvtoolgenesis-api-1` | **8001** | 8000 | FastAPI (Python 3.12) + Alembic |
-| `db` | `rvtoolgenesis-db-1` | **5433** | 5432 | PostgreSQL 16 |
+| `web` | `rvtool_genesis-web-1` | **3001** | 3000 | React + Carbon Design System UI |
+| `api` | `rvtool_genesis-api-1` | **8001** | 8000 | FastAPI (Python 3.12) + Alembic |
+| `db` | `rvtool_genesis-db-1` | *(none — internal only)* | 5432 | PostgreSQL 16 |
 
 ### Startup order
 
@@ -160,6 +165,7 @@ Run any make target from the repo root.
 
 | Command | What it does |
 |---|---|
+| `make generate-secret` | Generates a strong `SECRET_KEY` and prints the `.env` line |
 | `make setup` | Runs `./setup.sh` (full startup with health checks) |
 | `make up` | `docker compose up --build` — builds and starts all services in foreground |
 | `make up-d` | `docker compose up --build -d` — builds and starts in background (detached) |
@@ -167,6 +173,8 @@ Run any make target from the repo root.
 | `make logs` | `docker compose logs -f` — tails logs from all services |
 | `make migrate` | Runs `alembic upgrade head` inside the running API container |
 | `make test` | Runs the full test suite inside the API container (`pytest /tests/ -v`) |
+| `make typecheck` | Runs TypeScript typecheck (`tsc --noEmit`) in the `web/` directory |
+| `make lint` | Runs Ruff Python linter against API source files |
 | `make shell-api` | Opens a bash shell inside the API container |
 | `make shell-db` | Opens a `psql` shell in the database container |
 
@@ -246,20 +254,52 @@ Works with OpenAI, Azure OpenAI, local vLLM, and LM Studio.
 
 ### Before using cloud LLM providers
 
-1. **Change `SECRET_KEY`** in `.env` to a 32-byte random hex value (see above)
-2. Rebuild the API container: `docker compose up --build -d api`
-3. Re-enter cloud API keys in the Settings page
+1. **Generate a strong `SECRET_KEY`** — run `make generate-secret`, paste the output
+   into `.env`, then rebuild: `docker compose up --build -d api`
+2. Re-enter cloud API keys in the Settings page
 
 ### Network exposure
 
-By default, all three services bind to `127.0.0.1` (localhost only). This is safe
-on a developer Mac. **Do not expose ports 3001, 8001, or 5433 to external networks**
-without adding authentication — the API has no built-in auth layer.
+By default, all services bind to `127.0.0.1` (localhost only). The PostgreSQL
+database has **no host-network port** — it is only reachable within the internal
+Docker bridge network. **Do not expose ports 3001 or 8001 to external networks**
+without enabling API authentication.
 
-If you need remote access:
-- Use an SSH tunnel: `ssh -L 3001:localhost:3001 remote-host`
-- Or add a reverse proxy (nginx/Caddy) with TLS and HTTP basic auth in front of
-  the web container
+#### Optional bearer-token authentication (`API_TOKEN`)
+
+Set `API_TOKEN` in `.env` to a strong random value to require bearer-token
+authentication on every API request:
+
+```bash
+# Generate a token (same tool as SECRET_KEY):
+make generate-secret
+
+# Add to .env:
+API_TOKEN=<generated-value>
+
+# Restart the API:
+docker compose up --build -d api
+```
+
+Once set, every request must include the header:
+
+```
+Authorization: Bearer <API_TOKEN>
+```
+
+Leave `API_TOKEN` unset (the default) for home-network use — the API runs open,
+identical to the previous behaviour.
+
+#### Remote access from other machines
+
+For network-accessible demos where `API_TOKEN` is set:
+
+- Set `ALLOWED_ORIGINS` in `.env` to the origin of the accessing machine, e.g.
+  `ALLOWED_ORIGINS=http://192.168.1.42:3001`
+- Multiple origins: comma-separated, e.g.
+  `ALLOWED_ORIGINS=http://localhost:3001,http://192.168.1.42:3001`
+- For stricter perimeter control, add a reverse proxy (Nginx/Caddy) with TLS
+  in front of the web container
 
 ### API key storage
 

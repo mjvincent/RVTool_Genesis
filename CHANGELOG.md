@@ -11,6 +11,86 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.7.0] — 2026-07-21
+
+### Security
+
+- **SECRET\_KEY enforcement** — The API now refuses to start if `SECRET_KEY` is set to
+  the known default value or is shorter than 32 characters. Previously this was a logged
+  warning only. Use `make generate-secret` to generate a compliant key.
+  (`api/main.py`)
+
+- **PostgreSQL not exposed to host network** — Removed the `5433:5432` port mapping from
+  `docker-compose.yml`. The database is now only reachable within the internal Docker
+  bridge network (`api → db:5432`). Direct external connections to the DB are no longer
+  possible.
+
+- **LLM settings test endpoint — endpoint allowlist** — `POST /api/settings/test` now
+  validates the provider URL against an approved domain list before making any outbound
+  connection. Stored credentials cannot be forwarded to arbitrary URLs supplied in the
+  request body. Approved domains: `localhost`, `host.docker.internal`, `api.openai.com`,
+  `api.anthropic.com`, IBM WatsonX regional endpoints.
+  (`api/routers/settings.py` — `_APPROVED_ENDPOINT_HOSTS`, `_assert_approved_endpoint()`)
+
+- **Spreadsheet formula injection prevented** — All four Excel export generators now pass
+  user-supplied string values through a `sanitize_cell()` helper that prefixes
+  formula-trigger characters (`=`, `+`, `-`, `@`) with a single-quote, preventing
+  formula execution when exported workbooks are opened in Excel or LibreOffice Calc.
+  18 regression tests added.
+  (`api/services/export_utils.py`; `rvtools_generator.py`, `assumptions_generator.py`,
+  `vpc_calculator_generator.py`, `powervs_calculator_generator.py`)
+
+- **Optional API bearer-token authentication** — A `require_token` FastAPI dependency is
+  now applied to all routers. When `API_TOKEN` is not set (the default for home-network
+  use), the dependency is a no-op and behaviour is unchanged. When set, every request
+  must include `Authorization: Bearer <token>`. The health endpoint is excluded.
+  (`api/core/auth.py`, `api/core/config.py`, `api/main.py`)
+
+### Reliability
+
+- **Stuck-record auto-recovery on startup** — On API startup, any `ServerRecord` rows
+  left in `processing_status = 'processing'` from a previous container crash are
+  automatically reset to `'pending'`. Previously these required a manual reset API call.
+  (`api/main.py` lifespan function)
+
+### Build and tooling
+
+- **Production web container** — `web/Dockerfile` now builds a production asset bundle
+  (`tsc && vite build`) and serves it via `vite preview`. Previously the container ran
+  the Vite development server (`vite --host`) with HMR, source maps, and dev overlays.
+  The `docker-compose.override.yml` dev workflow (`npm run dev`) is unchanged for local
+  development.
+
+- **TypeScript zero-error build** — Fixed 10 TypeScript errors: `BulkNxfModal.tsx`
+  missing `previewNames` destructure, `NormalizePage.tsx` unbound `err` variable in
+  catch block. `npm run build` (`tsc && vite build`) now completes with zero errors.
+
+- **Centralized API fetch wrapper** — All 41 frontend API calls now use a shared
+  `apiFetch()` helper that throws a typed `ApiError` on any non-2xx response. Previously
+  37 of 41 calls parsed the JSON body without checking HTTP status, causing server errors
+  to silently appear as malformed data.
+  (`web/src/api/client.ts`)
+
+- **Configurable CORS origins** — `ALLOWED_ORIGINS` env var (comma-separated list)
+  replaces the hardcoded `http://localhost:3001`. Prevents demo-day failures when
+  the app is accessed from a non-localhost address on the same network.
+  (`api/core/config.py`, `api/main.py`)
+
+- **Vite and esbuild upgraded** — Vite upgraded from 5.4.8 to 8.x and
+  `@vitejs/plugin-react` upgraded to v6. Resolves 2 moderate/high CVEs in the esbuild
+  development server. `npm audit` reports zero vulnerabilities.
+
+- **CI gates** — GitHub Actions workflow (`.github/workflows/ci.yml`) added with three
+  jobs: Python lint (Ruff), Python unit tests (pytest), and TypeScript typecheck
+  (`tsc --noEmit`). Runs on push and PR to `main`. Matching `make lint`, `make typecheck`
+  Makefile targets added.
+
+- **`make generate-secret` target** — Generates a strong `SECRET_KEY` value and prints
+  the `.env` line ready to paste. Replaces the previous manual `python3 -c "import
+  secrets..."` instruction.
+
+---
+
 ## [1.6.2] — 2025-07-21
 
 ### Fixed
