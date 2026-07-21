@@ -539,6 +539,36 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v1.7.0 — IBM Presentation Readiness hardening
+
+- **SECRET\_KEY enforcement** — API refuses to start if `SECRET_KEY` is the default value or shorter than 32 characters. Use `make generate-secret`.
+- **PostgreSQL off the host network** — `5433:5432` port mapping removed; DB is only reachable within the Docker bridge network.
+- **LLM endpoint allowlist** — Settings test endpoint validates the provider URL against an approved domain list; stored credentials cannot be forwarded to arbitrary URLs.
+- **Spreadsheet formula injection prevented** — All four Excel generators sanitize user-supplied values so `=1+1` is written as literal text, not an active formula. 18 regression tests added.
+- **Optional API bearer-token auth** — Set `API_TOKEN` in `.env` to require `Authorization: Bearer <token>` on every request. Unset = no change for home-network use.
+- **Stuck-record auto-recovery** — Records left in `processing` state after a crash are automatically reset to `pending` on API startup.
+- **Production web container** — `web/Dockerfile` now builds compiled assets (`vite build`) and serves them via `vite preview` instead of the dev server.
+- **TypeScript zero-error build** — All 10 pre-existing TS errors resolved; `npm run build` is clean.
+- **Centralized `apiFetch` wrapper** — All frontend API calls now throw a typed `ApiError` on non-2xx responses instead of silently treating errors as data.
+- **Configurable CORS** — `ALLOWED_ORIGINS` env var replaces hardcoded `localhost:3001`; prevents demo-day failures on non-localhost networks.
+- **CI gates** — GitHub Actions runs Ruff lint, pytest, and `tsc --noEmit` on every push/PR to `main`.
+
+### v1.6.2
+
+- **Benchmark scorer fix** — `phi4-mini` and other small models no longer produce artificially low accuracy scores. Three previously unhandled but correct output variations now accepted: flattened JSON keys, `num_cpus` alias, and GB-as-MB memory values.
+
+### v1.6.1
+
+- **Pull from Discovery** — Discovered model cards have a **↓ Pull** button that streams `ollama pull` progress live (SSE) and refreshes the installed models list on completion.
+- **Benchmark shortcut** — Each discovered model card has a **⚖ Benchmark** button that pre-fills the Compare Models panel with that candidate vs. the current active model.
+- **Current model reference row** — Discover Models shows the active model as a pinned row; candidates scoring higher are highlighted with a green ▲ better badge.
+- **Discovery scoring fix** — HuggingFace compound names (`qwen3.6-27b-mtp-gguf`, `deepseek-v4-gguf`) now score correctly via a prefix-match table instead of defaulting to 5/10.
+- **Static catalog fallback** — 14 curated models shown when `ollama.com` is unreachable inside Docker.
+
+### v1.6.0
+
+- **Model Discovery** — "🔭 Check for New Models" button in the Local AI Advisor queries the Ollama library and HuggingFace Hub, filters to RAM-compatible structured-JSON models, and presents a ranked list with size, task-fit score, and a ready-to-copy pull command. Results cached 6 hours; Refresh bypasses cache.
+
 ### v1.5.0
 
 - **Docker Model Runner** — 6th LLM provider. Built into Docker Desktop ≥ 4.25, OpenAI-compatible, no API key required.
