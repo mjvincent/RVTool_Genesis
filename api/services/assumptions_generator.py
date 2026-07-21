@@ -13,6 +13,8 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from services.export_utils import sanitize_cell
+
 
 # ---------------------------------------------------------------------------
 # Styling constants
@@ -132,11 +134,11 @@ def generate_assumptions_xlsx(
             timestamp = timestamp.isoformat()
 
         ws_a.append([
-            a.get("vm_name"),
-            a.get("field_name"),
-            a.get("assumed_value"),
-            a.get("original_value"),
-            a.get("reasoning"),
+            sanitize_cell(a.get("vm_name")),
+            sanitize_cell(a.get("field_name")),
+            sanitize_cell(a.get("assumed_value")),
+            sanitize_cell(a.get("original_value")),
+            sanitize_cell(a.get("reasoning")),
             str(a.get("confidence") or "").capitalize(),
             timestamp,
         ])

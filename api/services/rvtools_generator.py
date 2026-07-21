@@ -14,6 +14,8 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from services.export_utils import sanitize_cell
+
 
 # ---------------------------------------------------------------------------
 # Header definitions — exact spelling and order from RVTools 4.x
@@ -294,17 +296,17 @@ def generate_rvtools_xlsx(
         if not vinfo:
             continue
 
-        vm_name    = _get(vinfo, "vm_name")
+        vm_name    = sanitize_cell(_get(vinfo, "vm_name"))
         powerstate = _get(vinfo, "powerstate", "poweredOn")
         template   = _get(vinfo, "template", False)
         # For PowerVS records, use the IBM Cool OS family string in "OS according to the
         # configuration file" column so IBM Cool applies the correct pricing tier.
         # vinfo["powervs_os_family"] is set by ai_normalizer._map_powervs_os_family().
-        os_cfg     = _get(vinfo, "powervs_os_family") or _get(vinfo, "os_config")
-        os_tools   = _get(vinfo, "os_vmware_tools")
-        datacenter = _get(vinfo, "datacenter")
-        cluster    = _get(vinfo, "cluster")
-        host       = _get(vinfo, "host")
+        os_cfg     = sanitize_cell(_get(vinfo, "powervs_os_family") or _get(vinfo, "os_config"))
+        os_tools   = sanitize_cell(_get(vinfo, "os_vmware_tools"))
+        datacenter = sanitize_cell(_get(vinfo, "datacenter"))
+        cluster    = sanitize_cell(_get(vinfo, "cluster"))
+        host       = sanitize_cell(_get(vinfo, "host"))
         memory_mb  = _get(vinfo, "memory_mb")
         cpus       = _get(vinfo, "cpus")
 
@@ -346,7 +348,7 @@ def generate_rvtools_xlsx(
         for i, part in enumerate(vpartition_list):
             if not isinstance(part, dict):
                 continue
-            disk_label   = _get(part, "disk_label") or f"Hard disk {i+1}"
+            disk_label   = sanitize_cell(_get(part, "disk_label") or f"Hard disk {i+1}")
             capacity_mb  = _get(part, "capacity_mb")
             sheets["vDisk"].append([
                 vm_name, powerstate, template,
@@ -381,19 +383,19 @@ def generate_rvtools_xlsx(
             sheets["vNetwork"].append([
                 vm_name, powerstate, template,
                 _get(nic, "srm_placeholder"),
-                _get(nic, "nic_label"),
-                _get(nic, "adapter"),
-                _get(nic, "network"),
-                _get(nic, "switch"),
+                sanitize_cell(_get(nic, "nic_label")),
+                sanitize_cell(_get(nic, "adapter")),
+                sanitize_cell(_get(nic, "network")),
+                sanitize_cell(_get(nic, "switch")),
                 _get(nic, "connected"),
                 _get(nic, "starts_connected"),
-                _get(nic, "mac_address"),
+                sanitize_cell(_get(nic, "mac_address")),
                 _get(nic, "type"),
-                _get(nic, "ipv4_address"),
-                _get(nic, "ipv6_address"),
+                sanitize_cell(_get(nic, "ipv4_address")),
+                sanitize_cell(_get(nic, "ipv6_address")),
                 _get(nic, "direct_path_io"),
                 _get(nic, "internal_sort_column"),
-                _get(nic, "annotation"),
+                sanitize_cell(_get(nic, "annotation")),
             ])
 
         # --- vTools (basic VM tools info) ---
@@ -441,11 +443,11 @@ def generate_rvtools_xlsx(
             if host_name and host_name not in seen_hosts:
                 seen_hosts.add(host_name)
                 sheets["vHost"].append([
-                    _get(vhost, "host_name"),
-                    _get(vhost, "datacenter"),
-                    _get(vhost, "cluster"),
-                    _get(vhost, "config_status"),
-                    _get(vhost, "cpu_model"),
+                    sanitize_cell(_get(vhost, "host_name")),
+                    sanitize_cell(_get(vhost, "datacenter")),
+                    sanitize_cell(_get(vhost, "cluster")),
+                    sanitize_cell(_get(vhost, "config_status")),
+                    sanitize_cell(_get(vhost, "cpu_model")),
                     _get(vhost, "speed_mhz"),
                     _get(vhost, "ht_available"),
                     _get(vhost, "ht_active"),
@@ -455,7 +457,7 @@ def generate_rvtools_xlsx(
                     _get(vhost, "cpu_usage_pct"),
                     _get(vhost, "memory_mb"),
                     _get(vhost, "memory_usage_pct"),
-                    _get(vhost, "console"),
+                    sanitize_cell(_get(vhost, "console")),
                     _get(vhost, "num_nics"),
                     _get(vhost, "num_hbas"),
                     _get(vhost, "num_vms"),
@@ -466,9 +468,9 @@ def generate_rvtools_xlsx(
                     _get(vhost, "vm_used_memory"),
                     _get(vhost, "vm_memory_swapped"),
                     _get(vhost, "vm_memory_ballooned"),
-                    _get(vhost, "esx_version"),
-                    _get(vhost, "vendor"),
-                    _get(vhost, "model"),
+                    sanitize_cell(_get(vhost, "esx_version")),
+                    sanitize_cell(_get(vhost, "vendor")),
+                    sanitize_cell(_get(vhost, "model")),
                 ])
 
     # Auto-size columns on all populated sheets

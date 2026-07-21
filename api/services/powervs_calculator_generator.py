@@ -22,6 +22,8 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from services.export_utils import sanitize_cell
+
 # ---------------------------------------------------------------------------
 # IBM PowerVS machine type selection
 # Format: (max_cores, max_mem_gb, machine_type, generation)
@@ -328,13 +330,13 @@ def generate_powervs_calculator_xlsx(
         # Compute row
         cmp_row = _pvs_row(n)
         _set(cmp_row, "Issues",                    issues_flag)
-        _set(cmp_row, "Server name",               vm_name)
+        _set(cmp_row, "Server name",               sanitize_cell(vm_name))
         _set(cmp_row, "Machine type",              machine_type)
         _set(cmp_row, "Number of instances",       1)
         _set(cmp_row, "CPU type",                  "Shared Uncapped")
         _set(cmp_row, "Entitled processors",       entitled)
         _set(cmp_row, "Memory (GB)",               mem_gb)
-        _set(cmp_row, "OS family",                 os_family)
+        _set(cmp_row, "OS family",                 sanitize_cell(os_family))
         _set(cmp_row, "Storage type",              storage_tier)
         _set(cmp_row, "Storage size (GB)",         disk_gb)
         _set(cmp_row, "Requirement Type",          "Compute")

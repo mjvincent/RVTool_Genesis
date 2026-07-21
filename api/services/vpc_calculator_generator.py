@@ -18,6 +18,8 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from services.export_utils import sanitize_cell
+
 # ---------------------------------------------------------------------------
 # IBM Cloud VPC compute families (confirmed from IBM Cloud Solutioning tool, mid-2025)
 #
@@ -730,7 +732,7 @@ def generate_vpc_calculator_xlsx(
         # Compute row
         cmp_row = _ps_row(len(PS_HEADERS))
         _set(cmp_row, "Issues",                    issues_str)
-        _set(cmp_row, "Compute name",              vm_name)
+        _set(cmp_row, "Compute name",              sanitize_cell(vm_name))
         _set(cmp_row, "Number of instances",       1)
         _set(cmp_row, "Billing Type",              "PAYG")
         _set(cmp_row, "Boot Volume Size (GB)",     boot_gb)
@@ -741,8 +743,8 @@ def generate_vpc_calculator_xlsx(
         _set(cmp_row, "Confidential Computing",    "No")
         _set(cmp_row, "Compute Server Type",       "Bare Metal Server" if is_bm else "Virtual Server")
         _set(cmp_row, "Feature VS",                "{}")
-        _set(cmp_row, "Operating System VS",       os_family)
-        _set(cmp_row, "Operating System Version VS", os_image)
+        _set(cmp_row, "Operating System VS",       sanitize_cell(os_family))
+        _set(cmp_row, "Operating System Version VS", sanitize_cell(os_image))
         # Always set category and family — every server now gets a profile
         _set(cmp_row, "Compute Category VS",  category)
         _set(cmp_row, "Compute Family VS",    family)
