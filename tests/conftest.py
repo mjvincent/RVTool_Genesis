@@ -1,8 +1,16 @@
 """Shared pytest fixtures for RVTool Genesis integration tests."""
 from __future__ import annotations
 
+import os
+import sys
+
 import pytest
 import httpx
+
+# Ensure the api/ package is importable when pytest is run from the repo root.
+# Individual test files that import directly from services.*, routers.*, etc.
+# rely on this path being present.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
 
 @pytest.fixture(scope="session")
