@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
@@ -22,7 +21,7 @@ from schemas.settings import (
     BenchmarkRequest, BenchmarkResult, BenchmarkCaseResult, ModelResult,
 )
 from services.crypto import decrypt, encrypt
-from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion, resolve_gguf, discover_models, DiscoveredModel
+from services.model_catalog import ModelRecommendation, get_recommendation, rank_local_models, get_pull_suggestion, resolve_gguf, discover_models
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +336,7 @@ class _RecommendationResponse(LLMSettingsResponse):
     pass  # LLMSettingsResponse already has previous_model
 
 
-from pydantic import BaseModel as _BaseModel
+from pydantic import BaseModel as _BaseModel  # noqa: E402
 
 class _RecommendationCheck(_BaseModel):
     recommendation: dict | None
@@ -467,8 +466,7 @@ async def snooze_recommendation(db: AsyncSession = Depends(get_db)) -> LLMSettin
 # GET /api/settings/local-advisor  (Sub-Task A)
 # ---------------------------------------------------------------------------
 
-import asyncio as _asyncio
-import platform as _platform
+import platform as _platform  # noqa: E402
 
 _advisor_cache: dict[str, object] = {}   # simple module-level TTL cache
 _ADVISOR_CACHE_TTL = 86_400              # 24 hours in seconds
@@ -600,7 +598,7 @@ async def get_local_advisor(
 # POST /api/settings/benchmark-models
 # ---------------------------------------------------------------------------
 
-import asyncio as _benchmark_asyncio
+import asyncio as _benchmark_asyncio  # noqa: E402
 
 # Module-level lock: prevents two benchmark runs from saturating the LLM
 # backend simultaneously.  Benchmark runs sequentially by design.
@@ -631,7 +629,7 @@ async def benchmark_models(
 
     from core.config import settings as cfg
     from services.model_benchmarker import (
-        run_benchmark, make_recommendation, CaseResult as _CaseResult,
+        run_benchmark, make_recommendation,
     )
 
     row = await _get_or_create_row(db)
@@ -796,8 +794,8 @@ async def get_discover_models(
 # POST /api/settings/pull-model  (Ollama pull with SSE progress stream)
 # ---------------------------------------------------------------------------
 
-from fastapi.responses import StreamingResponse as _StreamingResponse
-import json as _json
+from fastapi.responses import StreamingResponse as _StreamingResponse  # noqa: E402
+import json as _json  # noqa: E402
 
 
 @router.post("/settings/pull-model")

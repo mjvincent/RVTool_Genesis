@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 100
+exclude = [
+    "api/alembic/",
+    "api/__pycache__/",
+]
+
+[tool.ruff.lint]
+# E = pycodestyle errors, F = pyflakes, W = pycodestyle warnings
+# Excludes: E501 (long lines — handled by project style), ANN (type annotations)
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # line too long — not enforced; use formatter for that
+]

@@ -12,7 +12,6 @@ using the Windows Servers 20216 Subset dataset.
 from __future__ import annotations
 
 import io
-import math
 from typing import Any
 
 from openpyxl import Workbook
