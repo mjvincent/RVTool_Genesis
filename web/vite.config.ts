@@ -14,6 +14,18 @@ export default defineConfig({
       },
     },
   },
+  // preview serves the compiled dist/ in production containers.
+  // Mirrors server.proxy so /api requests are forwarded to the API container.
+  preview: {
+    host: "0.0.0.0",
+    port: 3000,
+    proxy: {
+      "/api": {
+        target: "http://api:8000",
+        changeOrigin: true,
+      },
+    },
+  },
   css: {
     preprocessorOptions: {
       scss: {

@@ -1,18 +1,33 @@
+# ── Stage 1: install dependencies ──────────────────────────────────────────
 FROM node:20-alpine AS deps
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Development stage — source is bind-mounted at runtime via override
-FROM node:20-alpine
+# ── Stage 2: build production assets ───────────────────────────────────────
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+RUN npm run build
+
+# ── Stage 3: serve compiled assets ─────────────────────────────────────────
+# Uses `vite preview` — serves the compiled dist/ folder with no dev tooling,
+# no HMR, and no source maps. The development override (docker-compose.override.yml)
+# bind-mounts source and replaces this CMD with `npm run dev` for local work.
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package.json ./
+
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "preview"]

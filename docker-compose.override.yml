@@ -1,4 +1,7 @@
-# Development overrides — hot-reload mounts
+# Development overrides — hot-reload mounts.
+# These overrides are applied automatically when running `docker compose up` locally.
+# In production (IBM-facing deployments), use `docker compose -f docker-compose.yml up`
+# to use the production Dockerfile without these overrides.
 services:
   api:
     volumes:
@@ -10,3 +13,5 @@ services:
   web:
     volumes:
       - ./web/src:/app/src
+    # Override the production CMD (npm run preview) with the Vite dev server for local work.
+    command: npm run dev
