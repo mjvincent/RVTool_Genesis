@@ -138,7 +138,7 @@ export default function NormalizePage() {
       await api.processing.start(projectId);
       startPolling();
       startHeartbeat();
-    } catch {
+    } catch (err) {
       setProcessError(`Could not start normalization: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
       setProcessing(false);
     }

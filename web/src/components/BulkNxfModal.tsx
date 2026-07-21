@@ -15,7 +15,7 @@ const TARGET_OPTIONS = [
   { value: 'nxf-2x2', label: 'nxf-2x2 — 2 vCPU / 2 GB RAM' },
 ];
 
-export default function BulkNxfModal({ projectId, unsupportedCount, onClose, onApplied }: Props) {
+export default function BulkNxfModal({ projectId, unsupportedCount, previewNames, onClose, onApplied }: Props) {
   const [targetProfile, setTargetProfile] = useState<string>('nxf-2x1');
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState('');
