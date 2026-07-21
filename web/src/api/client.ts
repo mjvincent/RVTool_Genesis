@@ -1,5 +1,43 @@
 const BASE = '/api';
 
+// ---------------------------------------------------------------------------
+// Central fetch helper — throws ApiError for any non-2xx response so
+// components always receive either valid data or a typed error.
+// ---------------------------------------------------------------------------
+
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
+  // Include the API token when one is configured (set VITE_API_TOKEN in the
+  // build environment for IBM-facing / shared-network deployments).
+  const token = import.meta.env.VITE_API_TOKEN as string | undefined;
+  const headers: HeadersInit = { ...(init?.headers ?? {}) };
+  if (token) {
+    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+  }
+  const r = await fetch(input, { ...init, headers });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const body = await r.json();
+      detail = body?.detail ?? body?.message ?? detail;
+    } catch {
+      // ignore — detail stays as "HTTP <status>"
+    }
+    throw new ApiError(r.status, detail);
+  }
+  return r.json() as Promise<T>;
+}
+
 // IBM Cloud VPC regions and their availability zones
 export const IBM_VPC_REGIONS: Record<string, { label: string; geography: string; zones: string[] }> = {
   'us-south':  { label: 'Dallas (us-south)',        geography: 'North America', zones: ['us-south-1', 'us-south-2', 'us-south-3'] },
@@ -247,20 +285,20 @@ export const api = {
       // The API expects no param for "all", no param for root (parent_id IS NULL handled server-side),
       // so we only append parent_id when it's a real UUID string.
       const qs = (parentId !== undefined && parentId !== null) ? `?parent_id=${parentId}` : '';
-      return fetch(`${BASE}/folders${qs}`).then(r => r.json());
+      return apiFetch(`${BASE}/folders${qs}`);
     },
     create: (data: { name: string; parent_id?: string | null }): Promise<Folder> =>
-      fetch(`${BASE}/folders`, {
+      apiFetch(`${BASE}/folders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      }),
     rename: (id: string, name: string): Promise<Folder> =>
-      fetch(`${BASE}/folders/${id}`, {
+      apiFetch(`${BASE}/folders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
-      }).then(r => r.json()),
+      }),
     delete: (id: string): Promise<Response> =>
       fetch(`${BASE}/folders/${id}`, { method: 'DELETE' }),
   },
@@ -268,129 +306,124 @@ export const api = {
     list: (folderId?: string | null): Promise<{ projects: Project[]; total: number }> => {
       // folderId undefined = all projects; null = root only; string = that folder
       const qs = folderId !== undefined ? `?folder_id=${folderId ?? 'null'}` : '';
-      return fetch(`${BASE}/projects${qs}`).then(r => r.json());
+      return apiFetch(`${BASE}/projects${qs}`);
     },
     create: (data: { name: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string }): Promise<Project> =>
-      fetch(`${BASE}/projects`, {
+      apiFetch(`${BASE}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      }),
     get: (id: string): Promise<Project> =>
-      fetch(`${BASE}/projects/${id}`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${id}`),
     update: (id: string, data: { name?: string; description?: string; folder_id?: string | null; vpc_region?: string; vpc_datacenter?: string; pvs_region?: string; pvs_datacenter?: string }): Promise<Project> =>
-      fetch(`${BASE}/projects/${id}`, {
+      apiFetch(`${BASE}/projects/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      }),
     delete: (id: string): Promise<Response> =>
       fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }),
     duplicate: (id: string, name: string): Promise<Project> =>
-      fetch(`${BASE}/projects/${id}/duplicate`, {
+      apiFetch(`${BASE}/projects/${id}/duplicate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
-      }).then(async r => {
-        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'Duplicate failed'); }
-        return r.json();
       }),
   },
   uploads: {
-    upload: (projectId: string, file: File): Promise<any> => {
+    upload: (projectId: string, file: File): Promise<{ id: string; project_id: string; filename: string; status: string; row_count: number | null; uploaded_at: string; error_message: string | null }> => {
       const form = new FormData();
       form.append('file', file);
-      return fetch(`${BASE}/projects/${projectId}/uploads`, {
+      return apiFetch(`${BASE}/projects/${projectId}/uploads`, {
         method: 'POST',
         body: form,
-      }).then(r => r.json());
+      });
     },
     getRecords: (projectId: string): Promise<{ records: ServerRecord[]; total: number }> =>
-      fetch(`${BASE}/projects/${projectId}/records`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/records`),
     getAssumptions: (projectId: string): Promise<Assumption[]> =>
-      fetch(`${BASE}/projects/${projectId}/assumptions`).then(r => r.json()),
-    patchRecord: (projectId: string, recordId: string, fields: Record<string, any>): Promise<ServerRecord> => {
+      apiFetch(`${BASE}/projects/${projectId}/assumptions`),
+    patchRecord: (projectId: string, recordId: string, fields: Record<string, unknown>): Promise<ServerRecord> => {
       // Top-level keys (notes) are handled separately from vinfo fields on the backend.
       // We send them merged into a flat dict; the backend pops known top-level keys first.
       const { notes, ...vinfo } = fields;
-      const body: Record<string, any> = { ...vinfo };
+      const body: Record<string, unknown> = { ...vinfo };
       if (notes !== undefined) body.notes = notes;
-      return fetch(`${BASE}/projects/${projectId}/records/${recordId}`, {
+      return apiFetch(`${BASE}/projects/${projectId}/records/${recordId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      }).then(r => r.json());
+      });
     },
     excludeRecord: (projectId: string, recordId: string, isExcluded: boolean, reason?: string | null): Promise<ServerRecord> =>
-      fetch(`${BASE}/projects/${projectId}/records/${recordId}/exclude`, {
+      apiFetch(`${BASE}/projects/${projectId}/records/${recordId}/exclude`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_excluded: isExcluded, exclusion_reason: reason ?? null }),
-      }).then(r => r.json()),
+      }),
     bulkOsReplace: (projectId: string, fromOs: string, toOs: string): Promise<{ updated_count: number; from_os: string; to_os: string }> =>
-      fetch(`${BASE}/projects/${projectId}/bulk-os-replace`, {
+      apiFetch(`${BASE}/projects/${projectId}/bulk-os-replace`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from_os: fromOs, to_os: toOs }),
-      }).then(r => r.json()),
+      }),
     getNxfUnsupportedCount: (projectId: string): Promise<{ unsupported_count: number; preview_names: string[] }> =>
-      fetch(`${BASE}/projects/${projectId}/nxf-unsupported-count`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/nxf-unsupported-count`),
     bulkNxfReplace: (projectId: string, targetProfile: string): Promise<{ updated_count: number; target_profile: string }> =>
-      fetch(`${BASE}/projects/${projectId}/bulk-nxf-replace`, {
+      apiFetch(`${BASE}/projects/${projectId}/bulk-nxf-replace`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_profile: targetProfile }),
-      }).then(r => r.json()),
+      }),
     bulkExclude: (projectId: string, filterType: string, filterValue: string, reason?: string): Promise<{ updated_count: number; filter_type: string; filter_value: string }> =>
-      fetch(`${BASE}/projects/${projectId}/bulk-exclude`, {
+      apiFetch(`${BASE}/projects/${projectId}/bulk-exclude`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filter_type: filterType, filter_value: filterValue, reason: reason || null }),
-      }).then(r => r.json()),
+      }),
   },
   processing: {
     start: (projectId: string): Promise<{ status: string; record_count: number; message: string }> =>
-      fetch(`${BASE}/projects/${projectId}/process`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/process`, { method: 'POST' }),
     getStatus: (projectId: string): Promise<ProcessingStatus> =>
-      fetch(`${BASE}/projects/${projectId}/processing-status`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/processing-status`),
     retryRecord: (projectId: string, recordId: string): Promise<{ processing_status: string; error_message: string | null }> =>
-      fetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }),
     resetStuck: (projectId: string): Promise<{ reset_count: number; message: string }> =>
-      fetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }),
   },
   exports: {
     // RVTools Export — 22-sheet full RVTools format (VCF Migration Lite)
     generateRVToolsPure: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/rvtools`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/rvtools`, { method: 'POST' }),
     downloadRVToolsPure: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
     generateAssumptions: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/assumptions`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/assumptions`, { method: 'POST' }),
     downloadAssumptions: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/assumptions/${exportId}/download`),
     generateRVToolsPowerVS: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/rvtools-powervs`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/rvtools-powervs`, { method: 'POST' }),
     downloadRVToolsPowerVS: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
     generateRVToolsPowerVSFull: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/rvtools-powervs-full`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/rvtools-powervs-full`, { method: 'POST' }),
     downloadRVToolsPowerVSFull: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
     generatePowerVSCalculator: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/powervs-calculator`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/powervs-calculator`, { method: 'POST' }),
     downloadPowerVSCalculator: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
-
-
     generateAssumptionsPowerVS: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/assumptions-powervs`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/assumptions-powervs`, { method: 'POST' }),
     downloadAssumptionsPowerVS: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/assumptions/${exportId}/download`),
     getPowerVSCount: (projectId: string): Promise<{ powervs_count: number }> =>
-      fetch(`${BASE}/projects/${projectId}/powervs-count`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/powervs-count`),
     // IBM Cloud VPC Calculator export (3-sheet: Project Settings, Exceptions, Data Domains)
     generateVPCCalculator: (projectId: string): Promise<ExportRecord> =>
-      fetch(`${BASE}/projects/${projectId}/export/vpc-calculator`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/export/vpc-calculator`, { method: 'POST' }),
     downloadVPCCalculator: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
   },
@@ -402,56 +435,44 @@ export const api = {
     restore: (file: File): Promise<{ restored: { id: string; name: string }[]; count: number }> => {
       const form = new FormData();
       form.append('file', file);
-      return fetch(`${BASE}/restore`, { method: 'POST', body: form }).then(async r => {
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({ detail: 'Restore failed' }));
-          throw new Error(err.detail || 'Restore failed');
-        }
-        return r.json();
-      });
+      return apiFetch(`${BASE}/restore`, { method: 'POST', body: form });
     },
   },
   settings: {
     get: (): Promise<LLMSettingsResponse> =>
-      fetch(`${BASE}/settings`).then(r => r.json()),
+      apiFetch(`${BASE}/settings`),
     save: (data: LLMSettingsSave): Promise<LLMSettingsResponse> =>
-      fetch(`${BASE}/settings`, {
+      apiFetch(`${BASE}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      }),
     test: (data: LLMSettingsSave): Promise<LLMTestResult> =>
-      fetch(`${BASE}/settings/test`, {
+      apiFetch(`${BASE}/settings/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(r => r.json()),
+      }),
     getRecommendation: (): Promise<ModelRecommendationCheck> =>
-      fetch(`${BASE}/settings/model-recommendation`).then(r => r.json()),
+      apiFetch(`${BASE}/settings/model-recommendation`),
     applyRecommendation: (): Promise<LLMSettingsResponse> =>
-      fetch(`${BASE}/settings/model-recommendation/apply`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/settings/model-recommendation/apply`, { method: 'POST' }),
     rollbackModel: (): Promise<LLMSettingsResponse> =>
-      fetch(`${BASE}/settings/model-recommendation/rollback`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/settings/model-recommendation/rollback`, { method: 'POST' }),
     snoozeRecommendation: (): Promise<LLMSettingsResponse> =>
-      fetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }).then(r => r.json()),
+      apiFetch(`${BASE}/settings/model-recommendation/snooze`, { method: 'POST' }),
     getLocalAdvisor: (refresh = false): Promise<LocalAdvisorResponse> =>
-      fetch(`${BASE}/settings/local-advisor${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
+      apiFetch(`${BASE}/settings/local-advisor${refresh ? '?refresh=true' : ''}`),
     resolveGguf: (model: string): Promise<{ found: boolean; hf_repo: string | null; gguf_file: string | null; pull_command: string | null; size_gb: number | null; error?: string }> =>
-      fetch(`${BASE}/settings/resolve-gguf?model=${encodeURIComponent(model)}`).then(r => r.json()),
+      apiFetch(`${BASE}/settings/resolve-gguf?model=${encodeURIComponent(model)}`),
     benchmarkModels: (req: BenchmarkRequest): Promise<BenchmarkResult> =>
-      fetch(`${BASE}/settings/benchmark-models`, {
+      apiFetch(`${BASE}/settings/benchmark-models`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
-      }).then(async r => {
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({ detail: 'Benchmark failed' }));
-          throw new Error(err.detail || 'Benchmark failed');
-        }
-        return r.json();
       }),
     discoverModels: (refresh = false): Promise<DiscoveryResponse> =>
-      fetch(`${BASE}/settings/discover-models${refresh ? '?refresh=true' : ''}`).then(r => r.json()),
+      apiFetch(`${BASE}/settings/discover-models${refresh ? '?refresh=true' : ''}`),
     pullModel: (model: string): EventSource =>
       new EventSource(`${BASE}/settings/pull-model-stream?model=${encodeURIComponent(model)}`),
     pullModelFetch: (model: string): Promise<ReadableStream<Uint8Array> | null> =>
@@ -464,17 +485,11 @@ export const api = {
 
   pricingTemplate: {
     getStatus: (projectId: string): Promise<{ has_template: boolean; filename: string | null; updated_at: string | null }> =>
-      fetch(`${BASE}/projects/${projectId}/pricing-template/status`).then(r => r.json()),
+      apiFetch(`${BASE}/projects/${projectId}/pricing-template/status`),
     upload: (projectId: string, file: File): Promise<{ id: string; project_id: string; filename: string; created_at: string; updated_at: string }> => {
       const form = new FormData();
       form.append('file', file);
-      return fetch(`${BASE}/projects/${projectId}/pricing-template`, { method: 'POST', body: form }).then(async r => {
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({ detail: 'Upload failed' }));
-          throw new Error(err.detail || 'Upload failed');
-        }
-        return r.json();
-      });
+      return apiFetch(`${BASE}/projects/${projectId}/pricing-template`, { method: 'POST', body: form });
     },
     populate: (projectId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/export/pricing-estimator`, { method: 'POST' }),
