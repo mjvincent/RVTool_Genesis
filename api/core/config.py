@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # The default is intentionally weak — it works out of the box for Ollama-only use.
     secret_key: str = "rvtool-genesis-change-me-in-production"
 
+    # CORS allowed origins — comma-separated list of origins the browser is allowed to
+    # make requests from.  Defaults to localhost:3001 (standard local Docker setup).
+    # For demos on a non-localhost address add: ALLOWED_ORIGINS=http://192.168.1.x:3001
+    allowed_origins: list[str] = ["http://localhost:3001"]
+
     # Optional HuggingFace API token — used by the GGUF resolver for higher rate limits.
     # Public models work without it; set HF_TOKEN in .env for private models or heavy use.
     hf_token: str | None = None
