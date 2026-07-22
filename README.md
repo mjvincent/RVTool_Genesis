@@ -84,11 +84,13 @@ cd RVTool_Genesis
 The setup script handles everything:
 - Checks Docker and Ollama are running
 - Pulls the `phi4-mini` model if not already available
-- Creates the `.env` configuration file automatically
+- Creates the `.env` configuration file with an **auto-generated `SECRET_KEY`** — no manual step required
 - Builds and starts all containers
 - Opens the app in your browser when ready
 
 > **If the script isn't executable after cloning:** `chmod +x setup.sh`
+
+> **SECRET_KEY** — A strong encryption key is generated automatically into `.env` on first run (using `openssl` or `python3`). Keep `.env` private — it is already in `.gitignore`. To rotate the key at any time (e.g. before sharing a deployment), run `make generate-secret`, paste the output into `.env`, and restart the API: `docker compose up --build -d api`. See [Security hardening](docs/OPERATIONS_GUIDE.md) for full details.
 
 ---
 
@@ -538,6 +540,11 @@ provider fails.
 ## Changelog
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
+
+### v1.8.0
+
+- **Billing type on Cloud Solution Export** — A modal now prompts for billing type before generating the IBM Cloud Cost Estimator workbook: `PAYG` (default), `1 Yr Reserved`, or `2 Yr Reserved`. The chosen value is written to every Billing Type cell in the Project Settings sheet.
+- **`setup.sh` auto-generates `SECRET_KEY`** — Fresh installs no longer crash on startup. `setup.sh` generates a strong key automatically using `openssl` (macOS/Linux/Git Bash/WSL) or `python3` (Windows fallback).
 
 ### v1.7.0 — IBM Presentation Readiness hardening
 

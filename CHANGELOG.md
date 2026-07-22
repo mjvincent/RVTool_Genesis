@@ -11,6 +11,37 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.8.0] — 2026-07-21
+
+### Added
+
+- **Billing type selection on Cloud Solution Export** — Clicking "Download Cloud Solution export"
+  now opens a modal with three radio button options before generating the workbook:
+  `PAYG` (default), `1 Yr Reserved`, and `2 Yr Reserved`. The chosen value is written
+  to every Billing Type cell in the Project Settings sheet of the IBM Cloud Cost Estimator
+  workbook. Previously hardcoded to `PAYG`.
+  (`web/src/pages/ExportPage.tsx` — billing type modal;
+  `web/src/api/client.ts` — `generateVPCCalculator()` body;
+  `api/routers/exports.py` — `VPCCalculatorRequest` body model;
+  `api/services/vpc_calculator_generator.py` — `billing_type` parameter)
+
+### Fixed
+
+- **`setup.sh` auto-generates `SECRET_KEY` on first run** — Previously `setup.sh` copied
+  `.env.example` verbatim, leaving the known-insecure default key. Since v1.7.0 the API
+  hard-fails on that default, causing a crash on every fresh install. `setup.sh` now
+  generates a strong 64-character hex key automatically after creating `.env`, using
+  `openssl rand -hex 32` (macOS/Linux/Git Bash/WSL) with a `python3 secrets` fallback
+  for Windows environments where `openssl` is unavailable. Users with an existing `.env`
+  are unaffected.
+  (`setup.sh`)
+
+- **README Quick Start updated** — Documents the auto-generated `SECRET_KEY` and explains
+  how to rotate it (`make generate-secret`) for users who need to share or redeploy.
+  (`README.md`)
+
+---
+
 ## [1.7.0] — 2026-07-21
 
 ### Security

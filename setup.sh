@@ -92,8 +92,28 @@ info "Setting up environment..."
 
 if [ ! -f ".env" ]; then
   cp .env.example .env
-  success "Created .env from .env.example"
-  echo "  All defaults are pre-configured — no editing required."
+
+  # Auto-generate a strong SECRET_KEY so the API starts cleanly on first run.
+  # Tries openssl first (macOS, Linux, Git Bash, WSL), then python3 as a
+  # cross-platform fallback. If neither is available the placeholder is left
+  # in place and the user is prompted to set it manually.
+  if command -v openssl &>/dev/null; then
+    _secret=$(openssl rand -hex 32)
+  elif command -v python3 &>/dev/null; then
+    _secret=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  else
+    _secret=""
+  fi
+
+  if [ -n "$_secret" ]; then
+    # Replace only the SECRET_KEY= line — no other lines are affected
+    sed -i.bak "s|^SECRET_KEY=.*|SECRET_KEY=${_secret}|" .env && rm -f .env.bak
+    success "Created .env with auto-generated SECRET_KEY — keep this file private"
+  else
+    warn "Created .env from .env.example — openssl and python3 not found."
+    warn "Before starting, run:  make generate-secret"
+    warn "Paste the output into .env as:  SECRET_KEY=<generated-value>"
+  fi
 else
   success ".env already exists — skipping (delete it to reset to defaults)"
 fi

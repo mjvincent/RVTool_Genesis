@@ -624,6 +624,7 @@ def generate_vpc_calculator_xlsx(
     project_name: str,
     vpc_region: str = "us-south",
     vpc_datacenter: str = "us-south-1",
+    billing_type: str = "PAYG",
 ) -> bytes:
     """Generate a 3-sheet IBM Cloud VPC Calculator workbook.
 
@@ -733,7 +734,7 @@ def generate_vpc_calculator_xlsx(
         _set(cmp_row, "Issues",                    issues_str)
         _set(cmp_row, "Compute name",              sanitize_cell(vm_name))
         _set(cmp_row, "Number of instances",       1)
-        _set(cmp_row, "Billing Type",              "PAYG")
+        _set(cmp_row, "Billing Type",              billing_type)
         _set(cmp_row, "Boot Volume Size (GB)",     boot_gb)
         _set(cmp_row, "IOPS",                      3)
         _set(cmp_row, "Requirement Type",          "Compute")

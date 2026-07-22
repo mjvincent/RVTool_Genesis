@@ -349,6 +349,10 @@ async def download_rvtools_export(
 # IBM Cloud VPC Calculator export (3-sheet) endpoint
 # ---------------------------------------------------------------------------
 
+class VPCCalculatorRequest(BaseModel):
+    billing_type: str = "PAYG"
+
+
 @router.post(
     "/projects/{project_id}/export/vpc-calculator",
     response_model=RVToolsExportResponse,
@@ -356,6 +360,7 @@ async def download_rvtools_export(
 )
 async def generate_vpc_calculator_export(
     project_id: uuid.UUID,
+    body: VPCCalculatorRequest = VPCCalculatorRequest(),
     db: AsyncSession = Depends(get_db),
 ) -> RVToolsExportResponse:
     """Generate a 3-sheet IBM Cloud VPC Calculator workbook.
@@ -367,6 +372,7 @@ async def generate_vpc_calculator_export(
 
     Target region and datacenter are read from the project's vpc_region /
     vpc_datacenter fields (set at project creation, editable in New Project form).
+    Billing type is supplied per-export: PAYG, 1 Yr Reserved, or 2 Yr Reserved.
     """
     project = await _get_project_or_404(db, project_id)
     enriched = await _fetch_enriched_records(project_id, db)
@@ -390,6 +396,7 @@ async def generate_vpc_calculator_export(
         project.name,
         vpc_region=vpc_region,
         vpc_datacenter=vpc_datacenter,
+        billing_type=body.billing_type,
     )
 
     safe_name = project.name.replace(" ", "_")
@@ -407,8 +414,8 @@ async def generate_vpc_calculator_export(
     await db.refresh(export)
 
     logger.info(
-        "VPC Calculator export %s generated for project %s (%d records, region=%s, dc=%s)",
-        export.id, project_id, len(x86_records), vpc_region, vpc_datacenter,
+        "VPC Calculator export %s generated for project %s (%d records, region=%s, dc=%s, billing=%s)",
+        export.id, project_id, len(x86_records), vpc_region, vpc_datacenter, body.billing_type,
     )
     return RVToolsExportResponse.model_validate(export)
 

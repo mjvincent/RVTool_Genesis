@@ -422,8 +422,12 @@ export const api = {
     getPowerVSCount: (projectId: string): Promise<{ powervs_count: number }> =>
       apiFetch(`${BASE}/projects/${projectId}/powervs-count`),
     // IBM Cloud VPC Calculator export (3-sheet: Project Settings, Exceptions, Data Domains)
-    generateVPCCalculator: (projectId: string): Promise<ExportRecord> =>
-      apiFetch(`${BASE}/projects/${projectId}/export/vpc-calculator`, { method: 'POST' }),
+    generateVPCCalculator: (projectId: string, billingType = 'PAYG'): Promise<ExportRecord> =>
+      apiFetch(`${BASE}/projects/${projectId}/export/vpc-calculator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billing_type: billingType }),
+      }),
     downloadVPCCalculator: (projectId: string, exportId: string): Promise<Response> =>
       fetch(`${BASE}/projects/${projectId}/exports/rvtools/${exportId}/download`),
   },

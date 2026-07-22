@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem } from '@carbon/react';
+import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem, Modal, RadioButtonGroup, RadioButton } from '@carbon/react';
 import { DocumentDownload, Checkmark, Information, Lightning, Edit } from '@carbon/icons-react';
 import { api, Project, ProcessingStatus, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
 import StepProgress from '../components/StepProgress';
@@ -88,6 +88,10 @@ export default function ExportPage() {
   const [pureDone, setPureDone]         = useState(false);
   const [asmDone, setAsmDone]           = useState(false);
 
+  // Billing type modal
+  const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [billingType, setBillingType]           = useState('PAYG');
+
   // PowerVS region edit state
   const [editingPvsRegion, setEditingPvsRegion] = useState(false);
   const [editPvsRegion, setEditPvsRegion]       = useState('');
@@ -140,10 +144,11 @@ export default function ExportPage() {
   const x86Count = recordCount - powervsCount;
 
   // ── x86 handlers ──────────────────────────────────────────────────────────
-  async function handleCloudSolutionExport() {
+  async function handleCloudSolutionExport(chosenBillingType: string) {
+    setBillingModalOpen(false);
     setVpcLoading(true); setError('');
     try {
-      const exp = await api.exports.generateVPCCalculator(projectId);
+      const exp = await api.exports.generateVPCCalculator(projectId, chosenBillingType);
       const resp = await api.exports.downloadVPCCalculator(projectId, exp.id);
       await triggerDownload(resp, (exp as any).filename || `VPC_Calculator_${projectId}.xlsx`);
       setVpcDone(true);
@@ -389,7 +394,7 @@ export default function ExportPage() {
                 {vpcLoading ? (
                   <InlineLoading description="Generating…" />
                 ) : (
-                  <Button renderIcon={vpcDone ? Checkmark : DocumentDownload} kind={vpcDone ? 'ghost' : 'primary'} onClick={handleCloudSolutionExport} size="md">
+                  <Button renderIcon={vpcDone ? Checkmark : DocumentDownload} kind={vpcDone ? 'ghost' : 'primary'} onClick={() => setBillingModalOpen(true)} size="md">
                     {vpcDone ? 'Downloaded ✓' : 'Download Cloud Solution export'}
                   </Button>
                 )}
@@ -669,6 +674,34 @@ export default function ExportPage() {
           </Button>
         </div>
       </div>
+
+      {/* ── Billing type modal ──────────────────────────────────────────── */}
+      <Modal
+        open={billingModalOpen}
+        modalHeading="Cloud Solution Export — Billing Type"
+        primaryButtonText="Download"
+        secondaryButtonText="Cancel"
+        onRequestSubmit={() => handleCloudSolutionExport(billingType)}
+        onRequestClose={() => setBillingModalOpen(false)}
+        onSecondarySubmit={() => setBillingModalOpen(false)}
+        size="xs"
+      >
+        <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1rem' }}>
+          Select the billing type to use in the IBM Cloud Cost Estimator workbook.
+          This applies to every Compute row in the Project Settings sheet.
+        </p>
+        <RadioButtonGroup
+          legendText="Billing type"
+          name="billing-type-group"
+          valueSelected={billingType}
+          onChange={(val) => setBillingType(val as string)}
+          orientation="vertical"
+        >
+          <RadioButton labelText="PAYG" value="PAYG" id="billing-payg" />
+          <RadioButton labelText="1 Yr Reserved" value="1 Yr Reserved" id="billing-1yr" />
+          <RadioButton labelText="2 Yr Reserved" value="2 Yr Reserved" id="billing-2yr" />
+        </RadioButtonGroup>
+      </Modal>
     </>
   );
 }
