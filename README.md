@@ -541,6 +541,13 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v1.9.0
+
+- **`billing_type` allowlist** — Invalid billing type values now return HTTP 422 instead of silently writing bad data into the Excel export.
+- **Non-root containers** — Both API and web containers now run as a dedicated non-root `appuser`. Passes IBM container security checks.
+- **Dependency audit in CI** — `pip-audit` and `npm audit` run on every push to catch vulnerable packages before they merge.
+- **Python dependencies updated** — All packages bumped to latest stable; cryptography 43 → 44, fastapi 0.115.0 → 0.115.14, uvicorn 0.30.6 → 0.34.3, sqlalchemy 2.0.35 → 2.0.41, and more.
+
 ### v1.8.0
 
 - **Billing type on Cloud Solution Export** — A modal now prompts for billing type before generating the IBM Cloud Cost Estimator workbook: `PAYG` (default), `1 Yr Reserved`, or `3 Yr Reserved`. The chosen value is written to every Billing Type cell in the Project Settings sheet.

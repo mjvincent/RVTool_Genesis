@@ -11,6 +11,42 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [1.9.0] — 2026-07-21
+
+### Security
+
+- **`billing_type` allowlist enforced** — `VPCCalculatorRequest.billing_type` is now typed as
+  `Literal["PAYG", "1 Yr Reserved", "3 Yr Reserved"]`. Previously accepted any string and
+  silently wrote it to the Excel workbook. Invalid values now return HTTP 422 with a clear
+  validation error from Pydantic.
+  (`api/routers/exports.py`)
+
+- **Containers run as non-root** — Both `api/Dockerfile` and `web/Dockerfile` now create a
+  dedicated `appuser` system account and switch to it before running the process. Previously
+  both containers ran as root, which violates container security best practices and is flagged
+  by IBM security tooling.
+  (`api/Dockerfile`, `web/Dockerfile`)
+
+- **Dependency audit in CI** — Two new GitHub Actions jobs run on every push/PR:
+  `pip-audit` scans Python dependencies for known CVEs; `npm audit --audit-level=moderate`
+  scans frontend dependencies. Vulnerable dependency versions will now block merges.
+  (`.github/workflows/ci.yml`)
+
+### Dependencies
+
+- **Python dependencies updated** — All pinned versions bumped to latest stable:
+  `fastapi` 0.115.0 → 0.115.14, `uvicorn` 0.30.6 → 0.34.3, `sqlalchemy` 2.0.35 → 2.0.41,
+  `alembic` 1.13.3 → 1.15.2, `asyncpg` 0.29.0 → 0.31.0, `psycopg2-binary` 2.9.9 → 2.9.12,
+  `python-multipart` 0.0.12 → 0.0.32, `python-dotenv` 1.0.1 → 1.2.2,
+  `pydantic-settings` 2.5.2 → 2.14.2, `httpx` 0.27.2 → 0.28.1,
+  `cryptography` 43.0.3 → 44.0.3, `pytest` 8.3.3 → 9.1.1,
+  `pytest-asyncio` 0.24.0 → 1.4.0.
+  `pandas` and `openpyxl` held at current versions (2.2.3 / 3.1.5) — pandas 3.x is a
+  major version bump requiring validation against all export generators.
+  (`api/requirements.txt`)
+
+---
+
 ## [1.8.0] — 2026-07-21
 
 ### Added

@@ -1,6 +1,8 @@
 """Export router — RVTools and Assumptions .xlsx generation and download."""
 from __future__ import annotations
 
+from typing import Literal
+
 import io
 import logging
 import uuid
@@ -350,7 +352,7 @@ async def download_rvtools_export(
 # ---------------------------------------------------------------------------
 
 class VPCCalculatorRequest(BaseModel):
-    billing_type: str = "PAYG"
+    billing_type: Literal["PAYG", "1 Yr Reserved", "3 Yr Reserved"] = "PAYG"
 
 
 @router.post(
