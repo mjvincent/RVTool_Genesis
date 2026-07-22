@@ -17,7 +17,7 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 - **Billing type selection on Cloud Solution Export** — Clicking "Download Cloud Solution export"
   now opens a modal with three radio button options before generating the workbook:
-  `PAYG` (default), `1 Yr Reserved`, and `2 Yr Reserved`. The chosen value is written
+  `PAYG` (default), `1 Yr Reserved`, and `3 Yr Reserved`. The chosen value is written
   to every Billing Type cell in the Project Settings sheet of the IBM Cloud Cost Estimator
   workbook. Previously hardcoded to `PAYG`.
   (`web/src/pages/ExportPage.tsx` — billing type modal;

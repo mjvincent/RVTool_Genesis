@@ -699,7 +699,7 @@ export default function ExportPage() {
         >
           <RadioButton labelText="PAYG" value="PAYG" id="billing-payg" />
           <RadioButton labelText="1 Yr Reserved" value="1 Yr Reserved" id="billing-1yr" />
-          <RadioButton labelText="2 Yr Reserved" value="2 Yr Reserved" id="billing-2yr" />
+          <RadioButton labelText="3 Yr Reserved" value="3 Yr Reserved" id="billing-2yr" />
         </RadioButtonGroup>
       </Modal>
     </>

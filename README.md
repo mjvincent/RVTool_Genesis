@@ -543,7 +543,7 @@ provider fails.
 
 ### v1.8.0
 
-- **Billing type on Cloud Solution Export** — A modal now prompts for billing type before generating the IBM Cloud Cost Estimator workbook: `PAYG` (default), `1 Yr Reserved`, or `2 Yr Reserved`. The chosen value is written to every Billing Type cell in the Project Settings sheet.
+- **Billing type on Cloud Solution Export** — A modal now prompts for billing type before generating the IBM Cloud Cost Estimator workbook: `PAYG` (default), `1 Yr Reserved`, or `3 Yr Reserved`. The chosen value is written to every Billing Type cell in the Project Settings sheet.
 - **`setup.sh` auto-generates `SECRET_KEY`** — Fresh installs no longer crash on startup. `setup.sh` generates a strong key automatically using `openssl` (macOS/Linux/Git Bash/WSL) or `python3` (Windows fallback).
 
 ### v1.7.0 — IBM Presentation Readiness hardening

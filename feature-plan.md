@@ -6,7 +6,7 @@ Two independent improvements:
 
 1. **SECRET_KEY onboarding** — The `setup.sh` script currently copies `.env.example` verbatim, which contains the known-insecure default `SECRET_KEY`. As of v1.7.0 the API hard-fails on startup when that default is present. New users hit a confusing crash on their very first run. `setup.sh` should auto-generate a strong key during first-time setup, and the README Quick Start should explain the requirement clearly. Windows users (running `setup.sh` via Git Bash or WSL) must also be covered — Python is available in the Docker environment so a cross-platform Python fallback is used when `openssl` is not found.
 
-2. **Billing type at export time** — The Cloud Solution Export (VPC Calculator xlsx) hardcodes `"PAYG"` in the Billing Type column of every Compute row. IBM Cloud pricing differs meaningfully between PAYG, 1 Yr Reserved, and 2 Yr Reserved. A modal prompt at download time lets the user choose before each export; no persistence required. The exact strings the IBM Cloud Solutioning Tool recognises are: `PAYG`, `1 Yr Reserved`, `2 Yr Reserved`.
+2. **Billing type at export time** — The Cloud Solution Export (VPC Calculator xlsx) hardcodes `"PAYG"` in the Billing Type column of every Compute row. IBM Cloud pricing differs meaningfully between PAYG, 1 Yr Reserved, and 3 Yr Reserved. A modal prompt at download time lets the user choose before each export; no persistence required. The exact strings the IBM Cloud Solutioning Tool recognises are: `PAYG`, `1 Yr Reserved`, `3 Yr Reserved`.
 
 ---
 
@@ -65,7 +65,7 @@ Even with the auto-generation fix in Sub-Task 1, the README Quick Start should b
 ## Sub-Task 3 — Billing type modal on Cloud Solution Export
 
 **Intent:**  
-The VPC Calculator xlsx hardcodes `"PAYG"` in the `Billing Type` column for every Compute row. IBM Cloud reserved pricing (1 Yr, 2 Yr) is significantly cheaper and is a common choice in migration proposals. Adding a modal prompt at download time — radio buttons for PAYG / 1 Yr Reserved / 2 Yr Reserved — lets the user control this per-export without any DB changes or persistence.
+The VPC Calculator xlsx hardcodes `"PAYG"` in the `Billing Type` column for every Compute row. IBM Cloud reserved pricing (1 Yr, 2 Yr) is significantly cheaper and is a common choice in migration proposals. Adding a modal prompt at download time — radio buttons for PAYG / 1 Yr Reserved / 3 Yr Reserved — lets the user control this per-export without any DB changes or persistence.
 
 **Expected Outcomes:**
 - Clicking "Download Cloud Solution Export" opens a small Carbon `Modal` with three radio button options: `PAYG` (default selected), `1 Year Reserved`, `2 Year Reserved`.
@@ -79,7 +79,7 @@ The VPC Calculator xlsx hardcodes `"PAYG"` in the `Billing Type` column for ever
 **Frontend (`web/src/pages/ExportPage.tsx`):**
 1. Add state: `billingModalOpen: boolean`, `billingType: string` (default `'PAYG'`).
 2. Replace the direct `handleCloudSolutionExport()` call on button click with opening the modal (`setBillingModalOpen(true)`).
-3. Add a Carbon `Modal` component with title "Cloud Solution Export — Billing Type", three `RadioButton` options with the exact IBM Cloud Solutioning Tool strings: `PAYG` (default), `1 Yr Reserved`, `2 Yr Reserved`. Cancel and Download (primary) actions.
+3. Add a Carbon `Modal` component with title "Cloud Solution Export — Billing Type", three `RadioButton` options with the exact IBM Cloud Solutioning Tool strings: `PAYG` (default), `1 Yr Reserved`, `3 Yr Reserved`. Cancel and Download (primary) actions.
 4. On modal confirm: close modal, call the existing export logic passing `billingType` as a parameter.
 5. Update `handleCloudSolutionExport` to accept `billingType: string` and pass it to `api.exports.generateVPCCalculator(projectId, billingType)`.
 
@@ -114,7 +114,7 @@ The VPC Calculator xlsx hardcodes `"PAYG"` in the `Billing Type` column for ever
 - [x] README Quick Start clearly explains the auto-generated key and how to rotate it.
 - [x] Clicking "Download Cloud Solution Export" opens the billing type modal.
 - [x] Selecting "1 Yr Reserved" and downloading produces an xlsx where every Billing Type cell reads `1 Yr Reserved`.
-- [x] Selecting "2 Yr Reserved" produces `2 Yr Reserved` in the xlsx.
+- [x] Selecting "3 Yr Reserved" produces `3 Yr Reserved` in the xlsx.
 - [x] PAYG (default) produces `PAYG` — unchanged from current behaviour.
 - [x] Cancelling the modal does not trigger any export or loading state.
 - [x] All existing tests still pass (`make test`).

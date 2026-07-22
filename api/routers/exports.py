@@ -372,7 +372,7 @@ async def generate_vpc_calculator_export(
 
     Target region and datacenter are read from the project's vpc_region /
     vpc_datacenter fields (set at project creation, editable in New Project form).
-    Billing type is supplied per-export: PAYG, 1 Yr Reserved, or 2 Yr Reserved.
+    Billing type is supplied per-export: PAYG, 1 Yr Reserved, or 3 Yr Reserved.
     """
     project = await _get_project_or_404(db, project_id)
     enriched = await _fetch_enriched_records(project_id, db)
