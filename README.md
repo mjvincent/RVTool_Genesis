@@ -541,6 +541,11 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v2.0.0
+
+- **Exception-first Review Queue** — Review page defaults to "Needs attention" — errors first, then low-confidence AI results, then records missing key fields. Four filter preset buttons with count badges. Silently falls back to "All" when everything looks good.
+- **Upload Mapping Confirmation** — After upload, a column preview panel shows detected column names and 5 sample rows before normalization begins. "Looks good" proceeds; "Re-upload" clears for a fresh file.
+
 ### v1.9.0
 
 - **`billing_type` allowlist** — Invalid billing type values now return HTTP 422 instead of silently writing bad data into the Excel export.

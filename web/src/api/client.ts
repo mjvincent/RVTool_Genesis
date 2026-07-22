@@ -332,7 +332,7 @@ export const api = {
       }),
   },
   uploads: {
-    upload: (projectId: string, file: File): Promise<{ id: string; project_id: string; filename: string; status: string; row_count: number | null; uploaded_at: string; error_message: string | null }> => {
+    upload: (projectId: string, file: File): Promise<{ id: string; project_id: string; filename: string; status: string; row_count: number | null; uploaded_at: string; error_message: string | null; columns: string[]; sample_rows: Record<string, unknown>[] }> => {
       const form = new FormData();
       form.append('file', file);
       return apiFetch(`${BASE}/projects/${projectId}/uploads`, {

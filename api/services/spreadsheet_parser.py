@@ -79,15 +79,21 @@ def _read_dataframe(file_bytes: bytes, filename: str, header_row: int) -> pd.Dat
     return df
 
 
-def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
-    """Parse an uploaded spreadsheet and return a list of row dicts.
+def parse_spreadsheet(
+    file_bytes: bytes,
+    filename: str,
+) -> dict[str, Any]:
+    """Parse an uploaded spreadsheet and return a result dict with keys:
 
-    Each dict uses cleaned column names as keys and JSON-serialisable values.
-    Every row also contains a reserved key ``_row_number`` (int) that holds the
-    **absolute spreadsheet row number** matching what Excel shows in its row
-    gutter (1-based, header row = 1 or 2 depending on title detection).  This
-    lets the UI display "Row 7 in your spreadsheet" on failed/incomplete records
-    so the user can locate the problem in the original file.
+    - ``rows``: list of row dicts (cleaned column names + JSON-serialisable
+      values). Every row also contains the reserved key ``_row_number`` (int)
+      that holds the **absolute spreadsheet row number** matching what Excel
+      shows in its row gutter (1-based, header row = 1 or 2 depending on title
+      detection). This lets the UI display "Row 7 in your spreadsheet" on
+      failed/incomplete records so the user can locate the problem in the
+      original file.
+    - ``columns``: list of cleaned column names (excluding ``_row_number``).
+    - ``sample_rows``: first 5 row dicts, each without the ``_row_number`` key.
 
     Raises ValueError for files that cannot be parsed.
     """
@@ -161,5 +167,10 @@ def parse_spreadsheet(file_bytes: bytes, filename: str) -> list[dict]:
         record["_row_number"] = int(pandas_idx) + header_row_offset + 2
         rows.append(record)
 
+    columns: list[str] = [k for k in (rows[0].keys() if rows else []) if k != "_row_number"]
+    sample_rows: list[dict] = [
+        {k: v for k, v in row.items() if k != "_row_number"} for row in rows[:5]
+    ]
+
     logger.info("Parsed %d rows from '%s'", len(rows), filename)
-    return rows
+    return {"rows": rows, "columns": columns, "sample_rows": sample_rows}

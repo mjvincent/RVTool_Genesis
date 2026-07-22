@@ -4,6 +4,7 @@ import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem }
 import { Upload, Checkmark, ChevronRight } from '@carbon/icons-react';
 import { api, Project } from '../api/client';
 import StepProgress from '../components/StepProgress';
+import MappingPreview from '../components/MappingPreview';
 
 export default function UploadPage() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +18,12 @@ export default function UploadPage() {
   const [existingCount, setExistingCount] = useState(0);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Mapping preview state — populated after a fresh upload; null = no fresh upload yet
+  const [mappingPreview, setMappingPreview] = useState<{
+    columns: string[];
+    sampleRows: Record<string, unknown>[];
+  } | null>(null);
 
   useEffect(() => {
     api.projects.get(projectId).then(setProject).catch(() => {});
@@ -44,17 +51,28 @@ export default function UploadPage() {
     setUploading(true);
     setUploadError('');
     setUploadedFile(null);
+    setMappingPreview(null);
     try {
       const result = await api.uploads.upload(projectId, file);
       if (result.error_message) throw new Error(result.error_message);
       const count = result.row_count ?? 0;
       setUploadedFile({ name: file.name, count });
       setExistingCount(count);
+      // Show mapping preview when columns are available
+      if (result.columns && result.columns.length > 0) {
+        setMappingPreview({ columns: result.columns, sampleRows: result.sample_rows ?? [] });
+      }
     } catch (err: any) {
       setUploadError(`Upload failed: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
     } finally {
       setUploading(false);
     }
+  }
+
+  function handleReupload() {
+    setUploadedFile(null);
+    setExistingCount(0);
+    setMappingPreview(null);
   }
 
   const hasRecords = uploadedFile !== null || existingCount > 0;
@@ -98,6 +116,16 @@ export default function UploadPage() {
             <div className="drop-zone" style={{ cursor: 'default' }}>
               <InlineLoading description="Parsing file…" />
             </div>
+          ) : mappingPreview && uploadedFile ? (
+            // Fresh upload: show mapping confirmation preview
+            <MappingPreview
+              fileName={uploadedFile.name}
+              rowCount={uploadedFile.count}
+              columns={mappingPreview.columns}
+              sampleRows={mappingPreview.sampleRows}
+              onConfirm={() => navigate(`/projects/${projectId}/normalize`)}
+              onReupload={handleReupload}
+            />
           ) : hasRecords ? (
             <div className="file-uploaded">
               <Checkmark size={20} style={{ color: '#24a148', flexShrink: 0 }} />
@@ -109,7 +137,7 @@ export default function UploadPage() {
               </div>
               <button
                 style={{ background: 'none', border: 'none', color: '#0f62fe', fontSize: '0.875rem', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap', padding: 0 }}
-                onClick={() => { setUploadedFile(null); setExistingCount(0); }}
+                onClick={handleReupload}
               >
                 Replace file
               </button>

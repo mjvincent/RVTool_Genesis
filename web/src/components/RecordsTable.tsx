@@ -9,9 +9,12 @@ import { Renew, WarningAlt, Edit } from '@carbon/icons-react';
 import { api, ServerRecord, Assumption } from '../api/client';
 import EditRecordModal from './EditRecordModal';
 
+export type FilterPreset = 'attention' | 'errors' | 'excluded' | 'all';
+
 interface Props {
   projectId: string;
   onViewAssumptions: (vmName: string, assumptions: Assumption[]) => void;
+  filterPreset?: FilterPreset;
 }
 
 const headers = [
@@ -58,7 +61,28 @@ function isMissingCpuOrRam(r: ServerRecord): boolean {
   return (cpuMissing || ramMissing) && r.processing_status !== 'error' && r.status !== 'error';
 }
 
-export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
+function isMissingKeyField(r: ServerRecord): boolean {
+  const nd = r.normalized_data ?? {};
+  const cpuCount = safeGet(nd, 'vinfo.cpus', 'vinfo.cpu_count', 'vinfo.num_cpus');
+  const ramMb    = safeGet(nd, 'vinfo.memory_mb');
+  const osName   = safeGet(nd, 'vinfo.os_config');
+  return (
+    (cpuCount == null || cpuCount === '' || Number(cpuCount) === 0) ||
+    (ramMb    == null || ramMb    === '' || Number(ramMb)    === 0) ||
+    (osName   == null || osName   === '')
+  );
+}
+
+function hasFallbackOrLowConfidence(r: ServerRecord): boolean {
+  const assumptions = r.assumptions ?? [];
+  return assumptions.some(
+    a => a.confidence === 'low' ||
+         a.reasoning?.includes('Python synthesizer') ||
+         a.reasoning?.toLowerCase().includes('fallback')
+  );
+}
+
+export default function RecordsTable({ projectId, onViewAssumptions, filterPreset = 'all' }: Props) {
   const [records, setRecords] = useState<ServerRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -121,15 +145,40 @@ export default function RecordsTable({ projectId, onViewAssumptions }: Props) {
       || r.status === 'complete' || r.status === 'error'
   );
 
+  // Apply filter preset before the existing search filter.
+  const presetFiltered: ServerRecord[] = (() => {
+    if (filterPreset === 'errors') {
+      return visibleRecords.filter(
+        r => r.processing_status === 'error' || (r as any).status === 'error'
+      );
+    }
+    if (filterPreset === 'excluded') {
+      return visibleRecords.filter(r => r.is_excluded);
+    }
+    if (filterPreset === 'attention') {
+      const errorRecs   = visibleRecords.filter(r => r.processing_status === 'error' || (r as any).status === 'error');
+      const errorIds    = new Set(errorRecs.map(r => r.id));
+      const lowConfRecs = visibleRecords.filter(r => !errorIds.has(r.id) && !r.is_excluded && hasFallbackOrLowConfidence(r));
+      const lowConfIds  = new Set(lowConfRecs.map(r => r.id));
+      const missingRecs = visibleRecords.filter(r => !errorIds.has(r.id) && !lowConfIds.has(r.id) && !r.is_excluded && isMissingKeyField(r));
+      return [...errorRecs, ...lowConfRecs, ...missingRecs];
+    }
+    // 'all' — no preset filter
+    return visibleRecords;
+  })();
+
   // Sort: servers missing CPU or RAM data float to top for human intervention.
   // Within each group, preserve original order.
-  const sortedVisible = [...visibleRecords].sort((a, b) => {
-    const missingA = isMissingCpuOrRam(a);
-    const missingB = isMissingCpuOrRam(b);
-    if (missingA && !missingB) return -1;
-    if (!missingA && missingB) return 1;
-    return 0;
-  });
+  // (Skip default sort when a preset with its own ordering is active.)
+  const sortedVisible = filterPreset === 'attention'
+    ? presetFiltered
+    : [...presetFiltered].sort((a, b) => {
+        const missingA = isMissingCpuOrRam(a);
+        const missingB = isMissingCpuOrRam(b);
+        if (missingA && !missingB) return -1;
+        if (!missingA && missingB) return 1;
+        return 0;
+      });
 
   const filtered = filterText
     ? sortedVisible.filter(r => {

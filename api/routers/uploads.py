@@ -75,7 +75,10 @@ async def upload_file(
 
     # --- Parse ----------------------------------------------------------------
     try:
-        rows = await asyncio.to_thread(parse_spreadsheet, file_bytes, filename)
+        parse_result = await asyncio.to_thread(parse_spreadsheet, file_bytes, filename)
+        rows = parse_result["rows"]
+        columns: list[str] = parse_result["columns"]
+        sample_rows: list = parse_result["sample_rows"]
     except ValueError as exc:
         upload.status = "error"
         upload.error_message = str(exc)
@@ -128,7 +131,10 @@ async def upload_file(
     await db.commit()
     await db.refresh(upload)
 
-    return UploadResponse.model_validate(upload)
+    response = UploadResponse.model_validate(upload)
+    response.columns = columns
+    response.sample_rows = sample_rows
+    return response
 
 
 @router.get(

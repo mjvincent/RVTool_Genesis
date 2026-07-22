@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem } from '@carbon/react';
+import { Button, Tag, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem } from '@carbon/react';
 import { ChevronRight, Restart } from '@carbon/icons-react';
 import { api, Project, ProcessingStatus, Assumption, ServerRecord } from '../api/client';
 import StepProgress from '../components/StepProgress';
-import RecordsTable from '../components/RecordsTable';
+import RecordsTable, { FilterPreset } from '../components/RecordsTable';
 import AssumptionsPanel from '../components/AssumptionsPanel';
 import FailedRecordsPanel from '../components/FailedRecordsPanel';
 import BulkOSModal from '../components/BulkOSModal';
@@ -77,6 +77,12 @@ export default function ReviewPage() {
   const isComplete = !!(status?.is_complete && status.total > 0);
 
   // ---------------------------------------------------------------------------
+  // Filter preset state
+  // ---------------------------------------------------------------------------
+  const [filterPreset, setFilterPreset] = useState<FilterPreset>('attention');
+  const [allGoodNotice, setAllGoodNotice] = useState(false);
+
+  // ---------------------------------------------------------------------------
   // Derived record lists
   // ---------------------------------------------------------------------------
   const failedRecords  = records.filter(
@@ -85,6 +91,58 @@ export default function ReviewPage() {
   const normalRecords  = records.filter(
     r => r.processing_status === 'complete' && !r.is_excluded
   );
+
+  // Helper for attention detection (mirrors RecordsTable logic)
+  function hasFallbackOrLowConf(r: ServerRecord): boolean {
+    return (r.assumptions ?? []).some(
+      a => a.confidence === 'low' ||
+           a.reasoning?.includes('Python synthesizer') ||
+           a.reasoning?.toLowerCase().includes('fallback')
+    );
+  }
+  function isMissingKeyField(r: ServerRecord): boolean {
+    const nd = r.normalized_data ?? {};
+    const get = (obj: any, ...paths: string[]): any => {
+      for (const p of paths) {
+        const v = p.split('.').reduce((c: any, k) => c?.[k], obj);
+        if (v !== undefined && v !== null) return v;
+      }
+      return null;
+    };
+    const cpu = get(nd, 'vinfo.cpus', 'vinfo.cpu_count', 'vinfo.num_cpus');
+    const ram = get(nd, 'vinfo.memory_mb');
+    const os  = get(nd, 'vinfo.os_config');
+    return (cpu == null || cpu === '' || Number(cpu) === 0) ||
+           (ram == null || ram === '' || Number(ram) === 0) ||
+           (os  == null || os  === '');
+  }
+
+  // Count per preset (computed from the already-fetched records list)
+  const errorRecords    = records.filter(r => r.processing_status === 'error' || (r as any).status === 'error');
+  const excludedRecords = records.filter(r => r.is_excluded);
+  const attentionRecords = (() => {
+    const errIds      = new Set(errorRecords.map(r => r.id));
+    const lowConf     = records.filter(r => !errIds.has(r.id) && !r.is_excluded && hasFallbackOrLowConf(r));
+    const lowConfIds  = new Set(lowConf.map(r => r.id));
+    const missing     = records.filter(r => !errIds.has(r.id) && !lowConfIds.has(r.id) && !r.is_excluded && isMissingKeyField(r));
+    return [...errorRecords, ...lowConf, ...missing];
+  })();
+
+  // Auto-switch: if preset is 'attention' and records are loaded with zero attention items
+  useEffect(() => {
+    if (!recordsLoading && filterPreset === 'attention' && records.length > 0 && attentionRecords.length === 0) {
+      setFilterPreset('all');
+      setAllGoodNotice(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordsLoading, records.length]);
+
+  const presetCounts: Record<FilterPreset, number> = {
+    attention: attentionRecords.length,
+    errors:    errorRecords.length,
+    excluded:  excludedRecords.length,
+    all:       records.length,
+  };
 
   // ---------------------------------------------------------------------------
   // Failed panel callbacks — real-time updates
@@ -250,6 +308,48 @@ export default function ReviewPage() {
           />
         )}
 
+        {allGoodNotice && (
+          <InlineNotification
+            kind="success"
+            title="All records look good"
+            subtitle="No records need attention — showing all records."
+            lowContrast
+            style={{ marginBottom: '1rem' }}
+            onCloseButtonClick={() => setAllGoodNotice(false)}
+          />
+        )}
+
+        {/* ── Filter preset bar ──────────────────────────────────────────── */}
+        {!recordsLoading && records.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
+            {(
+              [
+                { key: 'attention', label: 'Needs attention' },
+                { key: 'all',       label: 'All'             },
+                { key: 'errors',    label: 'Errors'          },
+                { key: 'excluded',  label: 'Excluded'        },
+              ] as { key: FilterPreset; label: string }[]
+            ).map(({ key, label }) => (
+              <Button
+                key={key}
+                kind={filterPreset === key ? 'primary' : 'ghost'}
+                size="sm"
+                onClick={() => { setFilterPreset(key); setAllGoodNotice(false); }}
+              >
+                {label}
+                {' '}
+                <Tag
+                  type={filterPreset === key ? 'high-contrast' : 'gray'}
+                  size="sm"
+                  style={{ marginLeft: '0.25rem', cursor: 'pointer' }}
+                >
+                  {presetCounts[key]}
+                </Tag>
+              </Button>
+            ))}
+          </div>
+        )}
+
         {recordsLoading ? (
           <InlineLoading description="Loading records…" style={{ marginBottom: '1rem' }} />
         ) : status !== null && status.total === 0 ? (
@@ -265,6 +365,7 @@ export default function ReviewPage() {
           <RecordsTable
             key={tableKey}
             projectId={projectId}
+            filterPreset={filterPreset}
             onViewAssumptions={(vmName, assumptions) => {
               setSelectedVmName(vmName);
               setSelectedAssumptions(assumptions);

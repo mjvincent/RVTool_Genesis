@@ -1,8 +1,9 @@
 """Pydantic v2 schemas for Upload and ServerRecord responses."""
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UploadResponse(BaseModel):
@@ -13,6 +14,8 @@ class UploadResponse(BaseModel):
     row_count: int | None
     uploaded_at: datetime
     error_message: str | None
+    columns: list[str] = Field(default_factory=list)
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

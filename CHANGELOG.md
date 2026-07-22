@@ -11,6 +11,34 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [2.0.0] — 2026-07-21
+
+### Added
+
+- **Exception-first Review Queue** — The Review page now defaults to a
+  "Needs attention" filter preset that surfaces problem records first: error
+  records appear at the top, followed by complete records with low-confidence
+  AI assumptions or fallback synthesis, then records missing key fields (CPU,
+  RAM, OS). Four preset filter buttons with count badges — **Needs attention**
+  (default), **Errors**, **Excluded**, **All** — sit above the records table.
+  If zero records need attention on load, the page silently shows all records
+  with a green "All records look good" notification. Existing search, sort, and
+  bulk operation controls are unchanged.
+  (`web/src/pages/ReviewPage.tsx`, `web/src/components/RecordsTable.tsx`)
+
+- **Upload Mapping Confirmation** — After a spreadsheet is uploaded, a column
+  preview panel appears before the user proceeds to normalize. The panel shows
+  the detected column names and up to 5 sample rows from the source file,
+  allowing the user to verify that VM name, CPU, RAM, OS, disk, and cluster
+  columns were correctly detected. "Looks good — proceed to normalize" continues
+  the workflow; "Re-upload different file" clears state for a fresh upload.
+  The backend now returns `columns` and `sample_rows` on every upload response.
+  (`api/services/spreadsheet_parser.py`, `api/schemas/upload.py`,
+  `api/routers/uploads.py`, `web/src/api/client.ts`,
+  `web/src/pages/UploadPage.tsx`, `web/src/components/MappingPreview.tsx`)
+
+---
+
 ## [1.9.0] — 2026-07-21
 
 ### Security
