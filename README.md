@@ -541,6 +541,10 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v2.1.0
+
+- **Migration Readiness Summary Banner** — Export page now shows a colour-coded banner with six stat tiles (Total, x86 ready, PowerVS ready, Pending, Errors, Excluded) and a single "Ready to export" / "N errors need attention" decision line before any export button is pressed.
+
 ### v2.0.0
 
 - **Exception-first Review Queue** — Review page defaults to "Needs attention" — errors first, then low-confidence AI results, then records missing key fields. Four filter preset buttons with count badges. Silently falls back to "All" when everything looks good.

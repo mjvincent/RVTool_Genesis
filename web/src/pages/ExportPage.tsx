@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem, Modal, RadioButtonGroup, RadioButton } from '@carbon/react';
 import { DocumentDownload, Checkmark, Information, Lightning, Edit } from '@carbon/icons-react';
-import { api, Project, ProcessingStatus, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
+import { api, Project, ProcessingStatus, ReadinessSummary, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
 import StepProgress from '../components/StepProgress';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,7 @@ export default function ExportPage() {
   const [project, setProject]           = useState<Project | null>(null);
   const [status, setStatus]             = useState<ProcessingStatus | null>(null);
   const [powervsCount, setPowervsCount] = useState(0);
+  const [readiness, setReadiness]       = useState<ReadinessSummary | null>(null);
 
   // Region edit state
   const [editingRegion, setEditingRegion] = useState(false);
@@ -126,6 +127,7 @@ export default function ExportPage() {
       setEditPvsDatacenter(p.pvs_datacenter ?? 'dal10');
     }).catch(() => {});
     api.processing.getStatus(projectId).then(setStatus).catch(() => {});
+    api.processing.getReadinessSummary(projectId).then(setReadiness).catch(() => {});
     api.exports.getPowerVSCount(projectId).then(r => setPowervsCount(r.powervs_count)).catch(() => {});
     api.pricingTemplate.getStatus(projectId).then(setTemplateStatus).catch(() => {});
   }, [projectId]);
@@ -287,6 +289,44 @@ export default function ExportPage() {
       <StepProgress projectId={projectId} currentStep={4} completedSteps={status?.is_complete ? [1, 2, 3] : [1]} />
 
       <div className="page-body">
+        {/* ── Migration Readiness Banner ──────────────────────────────────── */}
+        {readiness && (
+          <div style={{
+            background: readiness.export_ready ? '#defbe6' : readiness.error > 0 ? '#fff1f1' : '#fdf6e3',
+            border: `1px solid ${readiness.export_ready ? '#24a148' : readiness.error > 0 ? '#da1e28' : '#f1c21b'}`,
+            borderRadius: 4,
+            padding: '0.875rem 1rem',
+            marginBottom: '1.5rem',
+          }}>
+            {/* Decision line */}
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.9375rem', fontWeight: 600, color: readiness.export_ready ? '#0e6027' : readiness.error > 0 ? '#a2191f' : '#4d3800' }}>
+              {readiness.export_ready
+                ? '✓ Ready to export'
+                : readiness.pending > 0 && readiness.complete_x86 === 0
+                  ? '⏳ Processing not yet started'
+                  : readiness.error > 0
+                    ? `✗ ${readiness.error} record${readiness.error !== 1 ? 's' : ''} need attention before export`
+                    : '⚠ No complete x86 records to export yet'}
+            </p>
+            {/* Stat tiles */}
+            <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Total servers',    value: readiness.total,             color: '#161616' },
+                { label: 'x86 ready',        value: readiness.complete_x86,      color: '#0e6027' },
+                { label: 'PowerVS ready',    value: readiness.complete_powervs,  color: '#6929c4' },
+                { label: 'Pending',          value: readiness.pending,           color: readiness.pending > 0 ? '#a56d01' : '#525252' },
+                { label: 'Errors',           value: readiness.error,             color: readiness.error > 0 ? '#a2191f' : '#525252' },
+                { label: 'Excluded',         value: readiness.excluded,          color: '#525252' },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ minWidth: 72, textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700, lineHeight: 1, color }}>{value}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#525252', marginTop: '0.2rem' }}>{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && (
           <InlineNotification
             kind="error"

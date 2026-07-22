@@ -104,6 +104,16 @@ export interface ProcessingStatus {
   current_record_name?: string | null;
 }
 
+export interface ReadinessSummary {
+  total: number;
+  complete_x86: number;
+  complete_powervs: number;
+  excluded: number;
+  error: number;
+  pending: number;
+  export_ready: boolean;
+}
+
 export interface ServerRecord {
   id: string;
   project_id: string;
@@ -388,6 +398,8 @@ export const api = {
       apiFetch(`${BASE}/projects/${projectId}/process`, { method: 'POST' }),
     getStatus: (projectId: string): Promise<ProcessingStatus> =>
       apiFetch(`${BASE}/projects/${projectId}/processing-status`),
+    getReadinessSummary: (projectId: string): Promise<ReadinessSummary> =>
+      apiFetch(`${BASE}/projects/${projectId}/readiness-summary`),
     retryRecord: (projectId: string, recordId: string): Promise<{ processing_status: string; error_message: string | null }> =>
       apiFetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }),
     resetStuck: (projectId: string): Promise<{ reset_count: number; message: string }> =>

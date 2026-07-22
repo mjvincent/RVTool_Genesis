@@ -268,6 +268,75 @@ async def get_processing_status(
     )
 
 
+# ---------------------------------------------------------------------------
+# Migration Readiness Summary
+# ---------------------------------------------------------------------------
+
+class ReadinessSummary(BaseModel):
+    total: int
+    complete_x86: int
+    complete_powervs: int
+    excluded: int
+    error: int
+    pending: int
+    export_ready: bool   # True when complete_x86 > 0 and error == 0
+
+
+@router.get(
+    "/projects/{project_id}/readiness-summary",
+    response_model=ReadinessSummary,
+)
+async def get_readiness_summary(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ReadinessSummary:
+    """Return a single-call migration readiness summary for the Export page banner."""
+    await _get_project_or_404(db, project_id)
+
+    # One query: count by (processing_status, is_excluded, server_type)
+    rows = await db.execute(
+        select(
+            ServerRecord.processing_status,
+            ServerRecord.is_excluded,
+            ServerRecord.server_type,
+            func.count(ServerRecord.id).label("n"),
+        )
+        .where(ServerRecord.project_id == project_id)
+        .group_by(
+            ServerRecord.processing_status,
+            ServerRecord.is_excluded,
+            ServerRecord.server_type,
+        )
+    )
+
+    total = complete_x86 = complete_powervs = excluded = error = pending = 0
+
+    for proc_status, is_excl, srv_type, n in rows.all():
+        total += n
+        if is_excl:
+            excluded += n
+            continue
+        if proc_status == "complete":
+            if srv_type == "powervs":
+                complete_powervs += n
+            else:
+                complete_x86 += n
+        elif proc_status == "error":
+            error += n
+        elif proc_status in ("pending", "processing"):
+            pending += n
+
+    return ReadinessSummary(
+        total=total,
+        complete_x86=complete_x86,
+        complete_powervs=complete_powervs,
+        excluded=excluded,
+        error=error,
+        pending=pending,
+        export_ready=(complete_x86 > 0 and error == 0),
+    )
+
+
 @router.post(
     "/projects/{project_id}/records/{record_id}/process",
     response_model=dict,

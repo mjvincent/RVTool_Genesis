@@ -44,7 +44,7 @@ Replace the current per-section counts scattered across the Export page with a s
 - `web/src/api/client.ts` lines 97–105: `ProcessingStatus` interface — add `ReadinessSummary` alongside it.
 - Carbon `Tile` and `Tag` components are already used elsewhere in the codebase.
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ---
 

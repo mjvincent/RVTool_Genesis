@@ -11,6 +11,27 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [2.1.0] — 2026-07-21
+
+### Added
+
+- **Migration Readiness Summary Banner** — A summary banner now appears at the
+  top of the Export page showing the full migration health at a glance before
+  any export is attempted. The banner displays six stat tiles (Total servers,
+  x86 ready, PowerVS ready, Pending, Errors, Excluded) with colour-coded
+  values, and a single decision line: green "✓ Ready to export", amber warning
+  when processing is incomplete, or red "✗ N records need attention" when errors
+  exist. The banner is green only when at least one x86 record is complete and
+  zero error records exist.
+  A new `GET /projects/{project_id}/readiness-summary` endpoint computes all
+  counts in a single SQL query grouped by processing_status, is_excluded, and
+  server_type — no additional database schema changes required.
+  (`api/routers/processing.py` — `ReadinessSummary` model + endpoint;
+  `web/src/api/client.ts` — `ReadinessSummary` interface + `getReadinessSummary()`;
+  `web/src/pages/ExportPage.tsx` — readiness banner)
+
+---
+
 ## [2.0.0] — 2026-07-21
 
 ### Added
