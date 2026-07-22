@@ -541,6 +541,10 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v2.2.0
+
+- **Audit History** — Bulk OS Replace, Bulk Flex-Nano Fix, Bulk Exclude, and Cloud Solution Export now write to a persistent audit log. A collapsible "Activity" panel at the bottom of the Export page shows all entries with operation badge, summary, record count, and timestamp.
+
 ### v2.1.0
 
 - **Migration Readiness Summary Banner** — Export page now shows a colour-coded banner with six stat tiles (Total, x86 ready, PowerVS ready, Pending, Errors, Excluded) and a single "Ready to export" / "N errors need attention" decision line before any export button is pressed.

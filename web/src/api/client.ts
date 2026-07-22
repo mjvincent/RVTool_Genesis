@@ -104,6 +104,14 @@ export interface ProcessingStatus {
   current_record_name?: string | null;
 }
 
+export interface AuditLogEntry {
+  id: string;
+  operation: string;
+  summary: string;
+  record_count: number | null;
+  created_at: string;
+}
+
 export interface ReadinessSummary {
   total: number;
   complete_x86: number;
@@ -400,6 +408,9 @@ export const api = {
       apiFetch(`${BASE}/projects/${projectId}/processing-status`),
     getReadinessSummary: (projectId: string): Promise<ReadinessSummary> =>
       apiFetch(`${BASE}/projects/${projectId}/readiness-summary`),
+    getAuditLog: (projectId: string): Promise<AuditLogEntry[]> =>
+      apiFetch(`${BASE}/projects/${projectId}/audit-log`),
+
     retryRecord: (projectId: string, recordId: string): Promise<{ processing_status: string; error_message: string | null }> =>
       apiFetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }),
     resetStuck: (projectId: string): Promise<{ reset_count: number; message: string }> =>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, InlineNotification, InlineLoading, Breadcrumb, BreadcrumbItem, Select, SelectItem, Modal, RadioButtonGroup, RadioButton } from '@carbon/react';
 import { DocumentDownload, Checkmark, Information, Lightning, Edit } from '@carbon/icons-react';
-import { api, Project, ProcessingStatus, ReadinessSummary, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
+import { api, Project, ProcessingStatus, ReadinessSummary, AuditLogEntry, IBM_VPC_REGIONS, IBM_POWERVS_REGIONS } from '../api/client';
 import StepProgress from '../components/StepProgress';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,8 @@ export default function ExportPage() {
   const [status, setStatus]             = useState<ProcessingStatus | null>(null);
   const [powervsCount, setPowervsCount] = useState(0);
   const [readiness, setReadiness]       = useState<ReadinessSummary | null>(null);
+  const [auditLog, setAuditLog]         = useState<AuditLogEntry[]>([]);
+  const [auditOpen, setAuditOpen]       = useState(false);
 
   // Region edit state
   const [editingRegion, setEditingRegion] = useState(false);
@@ -128,6 +130,7 @@ export default function ExportPage() {
     }).catch(() => {});
     api.processing.getStatus(projectId).then(setStatus).catch(() => {});
     api.processing.getReadinessSummary(projectId).then(setReadiness).catch(() => {});
+    api.processing.getAuditLog(projectId).then(setAuditLog).catch(() => {});
     api.exports.getPowerVSCount(projectId).then(r => setPowervsCount(r.powervs_count)).catch(() => {});
     api.pricingTemplate.getStatus(projectId).then(setTemplateStatus).catch(() => {});
   }, [projectId]);
@@ -703,6 +706,61 @@ export default function ExportPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* ── Activity / Audit Log panel ──────────────────────────────────── */}
+        {auditLog.length > 0 && (
+          <div style={{ marginBottom: '1.5rem', border: '1px solid #e0e0e0', borderRadius: 4 }}>
+            <button
+              onClick={() => setAuditOpen(o => !o)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0.75rem 1rem', background: '#f4f4f4', border: 'none', cursor: 'pointer',
+                fontSize: '0.875rem', fontWeight: 600, color: '#161616',
+              }}
+            >
+              <span>Activity ({auditLog.length})</span>
+              <span style={{ fontSize: '0.75rem', color: '#525252' }}>{auditOpen ? '▲ Hide' : '▼ Show'}</span>
+            </button>
+            {auditOpen && (
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                {auditLog.map((entry, i) => {
+                  const opLabel: Record<string, string> = {
+                    bulk_os_replace:     'OS Replace',
+                    bulk_nxf_replace:    'NXF Fix',
+                    bulk_exclude:        'Bulk Exclude',
+                    export_vpc_calculator: 'Export',
+                  };
+                  const label = opLabel[entry.operation] ?? entry.operation;
+                  const when = new Date(entry.created_at);
+                  const timeStr = when.toLocaleString();
+                  return (
+                    <li key={entry.id} style={{
+                      display: 'flex', gap: '0.75rem', alignItems: 'flex-start',
+                      padding: '0.6rem 1rem',
+                      borderTop: i === 0 ? 'none' : '1px solid #e0e0e0',
+                      background: '#fff',
+                    }}>
+                      <span style={{
+                        fontSize: '0.6875rem', fontWeight: 600, padding: '0.1rem 0.4rem',
+                        borderRadius: 2, background: '#e0e0e0', color: '#161616',
+                        whiteSpace: 'nowrap', marginTop: '0.1rem',
+                      }}>
+                        {label}
+                      </span>
+                      <span style={{ flex: 1, fontSize: '0.8125rem', color: '#1f2328' }}>
+                        {entry.summary}
+                        {entry.record_count != null && (
+                          <span style={{ color: '#525252' }}> — {entry.record_count} record{entry.record_count !== 1 ? 's' : ''}</span>
+                        )}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#6f6f6f', whiteSpace: 'nowrap' }}>{timeStr}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         )}
 
         <div className="step-actions">

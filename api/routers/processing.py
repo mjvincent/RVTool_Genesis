@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import AsyncSessionLocal, get_db
-from db.models import Assumption, ServerRecord
+from db.models import Assumption, AuditLog, ServerRecord
 from routers.projects import _get_project_or_404
 from services import ai_normalizer
 
@@ -335,6 +335,48 @@ async def get_readiness_summary(
         pending=pending,
         export_ready=(complete_x86 > 0 and error == 0),
     )
+
+
+# ---------------------------------------------------------------------------
+# Audit log endpoint
+# ---------------------------------------------------------------------------
+
+class AuditLogEntry(BaseModel):
+    id: str
+    operation: str
+    summary: str
+    record_count: int | None
+    created_at: str
+
+
+@router.get(
+    "/projects/{project_id}/audit-log",
+    response_model=list[AuditLogEntry],
+)
+async def get_audit_log(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[AuditLogEntry]:
+    """Return the 50 most recent audit log entries for a project."""
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.project_id == project_id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(50)
+    )
+    entries = result.scalars().all()
+    return [
+        AuditLogEntry(
+            id=str(e.id),
+            operation=e.operation,
+            summary=e.summary,
+            record_count=e.record_count,
+            created_at=e.created_at.isoformat(),
+        )
+        for e in entries
+    ]
 
 
 @router.post(

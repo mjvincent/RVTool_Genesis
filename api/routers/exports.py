@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from services.audit import log_audit
+
 import io
 import logging
 import uuid
@@ -415,6 +417,12 @@ async def generate_vpc_calculator_export(
     await db.commit()
     await db.refresh(export)
 
+    await log_audit(
+        db, project_id,
+        operation="export_vpc_calculator",
+        summary=f"Cloud Solution export generated: {filename} ({len(x86_records)} records, billing={body.billing_type})",
+        record_count=len(x86_records),
+    )
     logger.info(
         "VPC Calculator export %s generated for project %s (%d records, region=%s, dc=%s, billing=%s)",
         export.id, project_id, len(x86_records), vpc_region, vpc_datacenter, body.billing_type,

@@ -12,6 +12,7 @@ from db.database import get_db
 from db.models import Assumption, ServerRecord, Upload
 from routers.projects import _get_project_or_404
 from schemas.upload import RecordsListResponse, ServerRecordResponse, UploadResponse
+from services.audit import log_audit
 from services.spreadsheet_parser import ALLOWED_EXTENSIONS, parse_spreadsheet
 
 logger = logging.getLogger(__name__)
@@ -474,6 +475,12 @@ async def bulk_os_replace(
                 "Check the OS value and try again."
             ),
         )
+    await log_audit(
+        db, project_id,
+        operation="bulk_os_replace",
+        summary=f"Bulk OS replace: '{body.from_os}' → '{body.to_os}'",
+        record_count=updated_count,
+    )
     await db.commit()
     logger.info(
         "Bulk OS replace: project %s — '%s' → '%s' (%d records updated)",
@@ -646,6 +653,12 @@ async def bulk_nxf_replace(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No active records have unsupported nxf-1x* profiles to replace.",
         )
+    await log_audit(
+        db, project_id,
+        operation="bulk_nxf_replace",
+        summary=f"Bulk Flex-Nano fix: unsupported nxf-1x* profiles → '{body.target_profile}'",
+        record_count=updated_count,
+    )
     await db.commit()
     logger.info(
         "Bulk nxf replace: project %s — → '%s' (%d records updated)",
@@ -750,6 +763,13 @@ async def bulk_exclude(
                 f"({body.filter_type}='{filter_value}'). Check the value and try again."
             ),
         )
+    await log_audit(
+        db, project_id,
+        operation="bulk_exclude",
+        summary=f"Bulk exclude by {body.filter_type}='{filter_value}'"
+                + (f": {body.reason}" if body.reason else ""),
+        record_count=updated_count,
+    )
     await db.commit()
     logger.info(
         "Bulk exclude: project %s — filter_type=%s value=%r (%d records excluded)",

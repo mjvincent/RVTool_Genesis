@@ -153,7 +153,7 @@ Add a visible, persistent audit trail for the most consequential user actions: b
 - Carbon `Accordion` already used in `BulkNxfModal.tsx` — reuse the same import pattern.
 - Alembic migration pattern: see `api/alembic/versions/` for existing examples.
 
-**Status:** [ ] pending
+**Status:** [x] complete
 
 ---
 

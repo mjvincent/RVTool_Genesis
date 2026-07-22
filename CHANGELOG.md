@@ -11,6 +11,32 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [2.2.0] — 2026-07-21
+
+### Added
+
+- **Audit History — Activity panel on Export page** — Every consequential user
+  action is now recorded in a persistent, project-scoped audit log. The following
+  operations write an entry: Bulk OS Replace, Bulk Flex-Nano Fix, Bulk Exclude,
+  and Cloud Solution Export generation. A collapsible "Activity (N)" panel at
+  the bottom of the Export page shows all entries most-recent-first with an
+  operation badge, summary text, record count, and timestamp. The panel is
+  hidden when no entries exist.
+  A new `GET /projects/{project_id}/audit-log` endpoint returns the 50 most
+  recent entries. A new `AuditLog` database table stores all entries; the
+  corresponding Alembic migration (`g1h2i3j4k5l6`) creates the table with a
+  composite index on `(project_id, created_at)`.
+  (`api/db/models.py` — `AuditLog` model;
+  `api/alembic/versions/g1h2i3j4k5l6_add_audit_log_table.py` — migration;
+  `api/services/audit.py` — `log_audit()` fire-and-forget helper;
+  `api/routers/processing.py` — `GET /audit-log` endpoint;
+  `api/routers/uploads.py` — audit calls on bulk OS/NXF/exclude;
+  `api/routers/exports.py` — audit call on VPC Calculator export;
+  `web/src/api/client.ts` — `AuditLogEntry` interface + `getAuditLog()`;
+  `web/src/pages/ExportPage.tsx` — Activity panel)
+
+---
+
 ## [2.1.0] — 2026-07-21
 
 ### Added
