@@ -11,6 +11,39 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [2.3.0] — 2026-07-21
+
+### Added
+
+- **PostgreSQL-backed durable job queue** — AI normalization processing now uses a
+  persistent `processing_jobs` table instead of FastAPI `BackgroundTasks`. Jobs
+  survive API container restarts; the worker loop polls for pending jobs using
+  `SELECT … FOR UPDATE SKIP LOCKED` to prevent duplicate scheduling. Stale
+  `in_progress` jobs are automatically re-queued on startup (5-minute timeout).
+  A new `POST /projects/{id}/processing/cancel` endpoint requests graceful
+  cancellation after the current record finishes.
+  (`api/db/models.py` — `ProcessingJob` model;
+  `api/alembic/versions/h2i3j4k5l6m7_add_processing_jobs_table.py` — migration;
+  `api/services/job_worker.py` — worker loop, claim, re-queue logic;
+  `api/routers/processing.py` — updated `start_processing`, new `cancel_processing`;
+  `api/main.py` — worker task started in lifespan)
+
+### Fixed
+
+- **Ruff lint gate widened to full `api/`** — CI `lint-python` job now runs
+  `ruff check api/` instead of 9 specific files. All pre-existing violations in
+  `ai_normalizer`, `model_catalog`, `exports`, `crypto`, and other modules resolved.
+- **Accessible Exclude checkbox** — The Exclude control in the records table now
+  carries an `aria-label` identifying the server by name (e.g. "Exclude prod-web-01
+  from exports") for screen reader users.
+- **XLSX zip-bomb and row-count guards** — `parse_spreadsheet` now rejects XLSX
+  files whose ZIP members have a decompression ratio > 100× or total uncompressed
+  size > 500 MB, and files with more than 100,000 data rows. 7 unit tests added.
+  (`api/services/spreadsheet_parser.py`;
+  `tests/test_upload_guards.py`)
+
+---
+
 ## [2.2.0] — 2026-07-21
 
 ### Added

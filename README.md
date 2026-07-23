@@ -543,6 +543,13 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v2.3.0
+
+- **Durable job queue** — Processing now uses a PostgreSQL-backed `processing_jobs` table. Jobs survive API restarts; concurrent start requests are safely deduplicated; a new Cancel endpoint stops processing after the current record.
+- **Ruff lint gate** — CI now checks the full `api/` directory; all pre-existing violations resolved.
+- **Accessible Exclude checkbox** — Screen readers now hear the server name when the Exclude control is focused.
+- **Upload safety guards** — XLSX zip-bomb (decompression-ratio > 100×, uncompressed > 500 MB) and row-count (> 100,000) checks added before pandas touches the file.
+
 ### v2.2.0
 
 - **Audit History** — Bulk OS Replace, Bulk Flex-Nano Fix, Bulk Exclude, and Cloud Solution Export now write to a persistent audit log. A collapsible "Activity" panel at the bottom of the Export page shows all entries with operation badge, summary, record count, and timestamp.
