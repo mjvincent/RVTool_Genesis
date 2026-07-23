@@ -12,6 +12,7 @@ Handles .xlsx, .xls, and .csv files with freeform customer layouts:
 import io
 import logging
 import math
+import zipfile
 from typing import Any
 
 import pandas as pd
@@ -20,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Accepted MIME types / extensions
 ALLOWED_EXTENSIONS = {".xlsx", ".xls", ".csv"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_FILE_SIZE = 50 * 1024 * 1024           # 50 MB  — checked before any parsing
+MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 500 MB — guards against zip-bomb XLSX
+MAX_DECOMPRESSION_RATIO = 100               # reject any single ZIP member > 100× compressed size
+MAX_ROWS = 100_000                          # hard ceiling on parsed rows
 
 
 def _to_python(value: Any) -> Any:
@@ -60,6 +64,41 @@ def _clean_column_name(name: Any) -> str | None:
         return None
     cleaned = str(name).strip().replace("\n", " ").replace("\r", "")
     return cleaned if cleaned else None
+
+
+def _check_xlsx_zip_safety(file_bytes: bytes) -> None:
+    """Reject XLSX files that look like zip bombs.
+
+    XLSX is a ZIP archive. A crafted file can be well under 50 MB compressed
+    but expand to gigabytes in memory. This guard iterates the ZIP member list
+    (which does not decompress anything) and raises ValueError if:
+
+    - The total uncompressed size of all members exceeds MAX_UNCOMPRESSED_BYTES.
+    - Any single member has a decompression ratio above MAX_DECOMPRESSION_RATIO
+      (only checked for members that are meaningfully compressed, ≥ 1 KB).
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            total_uncompressed = 0
+            for info in zf.infolist():
+                total_uncompressed += info.file_size
+                if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        f"File rejected: uncompressed content exceeds "
+                        f"{MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
+                    )
+                if info.compress_size >= 1024 and info.file_size > 0:
+                    ratio = info.file_size / info.compress_size
+                    if ratio > MAX_DECOMPRESSION_RATIO:
+                        raise ValueError(
+                            f"File rejected: ZIP member '{info.filename}' has a "
+                            f"decompression ratio of {ratio:.0f}× "
+                            f"(limit {MAX_DECOMPRESSION_RATIO}×). "
+                            "This file may be a zip bomb."
+                        )
+    except zipfile.BadZipFile:
+        # openpyxl will surface a more informative error later; don't shadow it here
+        pass
 
 
 def _read_dataframe(file_bytes: bytes, filename: str, header_row: int) -> pd.DataFrame:
@@ -110,6 +149,10 @@ def parse_spreadsheet(
             f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
         )
 
+    # --- XLSX zip-bomb guard (must come after extension check) ---------------
+    if ext in {".xlsx", ".xls"}:
+        _check_xlsx_zip_safety(file_bytes)
+
     # --- First pass with header=0 -----------------------------------------
     df = _read_dataframe(file_bytes, filename, header_row=0)
     # header_row_offset tracks which spreadsheet row contained the column headers.
@@ -151,6 +194,13 @@ def parse_spreadsheet(
 
     # --- Keep only rows that were real before ffill ---------------------------
     df = df[real_mask]
+
+    # --- Row count guard ------------------------------------------------------
+    if len(df) > MAX_ROWS:
+        raise ValueError(
+            f"File contains {len(df):,} data rows which exceeds the "
+            f"{MAX_ROWS:,}-row limit. Split the file into smaller batches."
+        )
 
     # --- Convert values -------------------------------------------------------
     rows: list[dict] = []

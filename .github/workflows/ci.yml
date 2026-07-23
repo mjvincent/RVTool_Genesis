@@ -65,7 +65,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r api/requirements.txt
       - name: Run pytest (unit tests only — no live DB required)
-        run: pytest tests/test_formula_injection.py tests/test_normalizer_disk_clamping.py tests/test_vpc_profile.py tests/test_model_catalog.py -v
+        run: pytest tests/test_formula_injection.py tests/test_normalizer_disk_clamping.py tests/test_vpc_profile.py tests/test_model_catalog.py tests/test_upload_guards.py -v
         env:
           # Provide a valid SECRET_KEY so the settings module loads without error
           SECRET_KEY: "ci-test-secret-key-not-used-for-encryption-00000000"
