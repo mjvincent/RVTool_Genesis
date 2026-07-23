@@ -383,6 +383,7 @@ docker compose exec db psql -U rvtool -d rvtooldb
 | `pricing_templates` | Stored IBM Price Estimator .xlsx per project |
 | `llm_settings` | Single-row table: active provider, encrypted API keys, model names |
 | `audit_log` | Append-only event log: project, action, target record, actor, timestamp, detail JSON |
+| `processing_jobs` | Durable job queue: one row per normalization run; status, progress counters, cancel flag |
 
 ### Checking database size
 
@@ -433,9 +434,12 @@ http://localhost:8001/api/redoc
 | `POST /api/projects/{id}/bulk-os-replace` | Bulk OS replacement |
 | `GET /api/projects/{id}/nxf-unsupported-count` | Count nxf-1x* records |
 | `POST /api/projects/{id}/bulk-nxf-replace` | Upgrade nxf-1x* profiles |
-| `POST /api/projects/{id}/process` | Start AI normalization |
+| `POST /api/projects/{id}/process` | Start AI normalization (durable job queue) |
 | `GET /api/projects/{id}/processing/status` | Normalization progress |
-| `POST /api/projects/{id}/processing/reset-stuck` | Reset orphaned records |
+| `POST /api/projects/{id}/processing/cancel` | Request graceful cancellation |
+| `POST /api/projects/{id}/processing/reset-stuck` | Reset orphaned records + archive stale job |
+| `GET /api/projects/{id}/readiness-summary` | Migration Readiness Summary (Export page banner) |
+| `GET /api/projects/{id}/audit-log` | 50 most recent audit log entries |
 | `POST /api/projects/{id}/export/vpc-calculator` | Generate Cloud Solution Export (x86) |
 | `POST /api/projects/{id}/export/rvtools` | Generate RVTools 22-sheet (x86) |
 | `POST /api/projects/{id}/export/rvtools-pure` | Generate RVTools 4-sheet (x86) |

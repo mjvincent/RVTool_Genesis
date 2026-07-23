@@ -625,7 +625,7 @@ e.g.  Medtronic_PowerVS_DAL10_2026Q3
 |---|---|---|
 | **Upload shows 0 records** | Parser couldn't find data rows | Check the upload count badge; if 0, the file may use a non-standard layout. Try exporting the customer spreadsheet as CSV and re-uploading. |
 | **Normalization never completes** | Ollama not running or model not pulled | Run `ollama pull phi4-mini` in a terminal and restart the app (`./setup.sh`). |
-| **"Reset stuck & resume" button appears** | Record in Ollama taking >90 s | Click the button — it resets the stuck record and resumes. Normal under memory pressure. |
+| **"Reset stuck & resume" button appears** | Ollama hung without raising an error (>90 s per record) | Click the button — it resets the stuck record and resumes. Normal under memory pressure. API restarts are handled automatically. |
 | **Cloud Solution Export has empty rows** | Records with `nxf-1x*` profiles | Use **Fix Nano Profiles** on the Review page before exporting. |
 | **IBM Price Estimator opens with #UNCALCULATED** | Expected behavior | These are formula cells. Open in Excel — they recalculate automatically. Do not open in Numbers or LibreOffice. |
 | **IBM Price Estimator shows $0 pricing** | OS value doesn't match Assumptions sheet | Verify the OS column in the Multiple LPAR Price Estimate sheet uses exact values: `AIX`, `IBM_i`, `IBM_i_MOL`, `Red Hat GP`, `Red Hat SAP`, `SUSE GP`, `SUSE SAP`, `BYO Lnx / NA`. |
