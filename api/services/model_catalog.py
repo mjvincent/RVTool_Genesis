@@ -13,8 +13,11 @@ To update the catalog:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import time as _time
 from typing import Any
+
+import httpx as _httpx
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -442,9 +445,6 @@ def get_pull_suggestion(installed_names: list[str], ram_gb: float) -> dict[str, 
 # HuggingFace Hub GGUF resolver
 # ---------------------------------------------------------------------------
 
-import time as _time
-import httpx as _httpx
-
 _gguf_cache: dict[str, dict] = {}    # { model_name: { ...result, "_ts": float } }
 _GGUF_CACHE_TTL = 3_600              # 1 hour
 
@@ -552,9 +552,6 @@ def resolve_gguf(model_name: str, hf_token: str | None = None) -> dict:
 # Proactive model discovery (Ollama library + HuggingFace Hub)
 # ---------------------------------------------------------------------------
 
-import time as _disc_time
-import httpx as _disc_httpx
-
 _discover_cache: dict[str, object] = {}   # key → {result, "_ts"}
 _DISCOVER_CACHE_TTL = 21_600             # 6 hours
 
@@ -602,7 +599,7 @@ def _fetch_ollama_search(limit: int = 50) -> tuple[list[dict], bool]:
     Falls back to _OLLAMA_STATIC_CATALOG when the network is unreachable.
     """
     try:
-        resp = _disc_httpx.get(
+        resp = _httpx.get(
             "https://ollama.com/api/search",
             params={"q": "", "limit": limit, "sort": "popular"},
             timeout=8.0,
@@ -630,7 +627,7 @@ def _fetch_hf_text_gen(limit: int = 20, hf_token: str | None = None) -> tuple[li
     if hf_token:
         headers["Authorization"] = f"Bearer {hf_token}"
     try:
-        resp = _disc_httpx.get(
+        resp = _httpx.get(
             "https://huggingface.co/api/models",
             params={
                 "task": "text-generation",
@@ -706,7 +703,7 @@ def discover_models(
     Max 12 results returned.
     """
     cache_key = f"discover:{round(ram_gb)}"
-    now = _disc_time.time()
+    now = _time.time()
 
     cached = _discover_cache.get(cache_key)
     if cached and now - cached["_ts"] < _DISCOVER_CACHE_TTL:  # type: ignore[index]

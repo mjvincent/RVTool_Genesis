@@ -8,6 +8,12 @@ causes truncation errors.
 """
 from __future__ import annotations
 
+import time as _time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from db.models import LLMSettings
+
 import json
 import logging
 import re
@@ -1003,7 +1009,7 @@ def _call_ollama(payload: dict) -> str:
                 _OLLAMA_TIMEOUT_SECONDS, attempt, _MAX_RETRIES + 1,
             )
             # Brief pause before retry so Ollama can clear its queue
-            import time; time.sleep(2)
+            _time.sleep(2)
             continue
         except httpx.HTTPStatusError as exc:
             raise ValueError(

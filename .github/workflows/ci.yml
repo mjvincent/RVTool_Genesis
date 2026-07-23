@@ -50,20 +50,8 @@ jobs:
           python-version: "3.12"
       - name: Install Ruff
         run: pip install ruff
-      - name: Run Ruff (new files added by this project only)
-        # Scope to files introduced/maintained by this project's hardening work.
-        # Pre-existing lint issues in other modules are tracked separately.
-        run: |
-          ruff check \
-            api/core/auth.py \
-            api/core/config.py \
-            api/main.py \
-            api/services/export_utils.py \
-            api/services/rvtools_generator.py \
-            api/services/assumptions_generator.py \
-            api/services/vpc_calculator_generator.py \
-            api/services/powervs_calculator_generator.py \
-            api/routers/settings.py
+      - name: Run Ruff
+        run: ruff check api/
 
   # ── Python tests ───────────────────────────────────────────────────────────
   test-python:

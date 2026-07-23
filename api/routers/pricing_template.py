@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import PricingTemplate, Project, ServerRecord
+from db.models import PricingTemplate, ServerRecord
 from routers.projects import _get_project_or_404
 from schemas.pricing_template import PricingTemplateResponse, PricingTemplateStatus
 from services import pricing_template_filler

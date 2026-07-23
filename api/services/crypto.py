@@ -10,7 +10,6 @@ Usage:
     plaintext = decrypt(token)
 """
 import base64
-import os
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes

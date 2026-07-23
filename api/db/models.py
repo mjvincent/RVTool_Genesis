@@ -1,6 +1,6 @@
 """SQLAlchemy 2.x ORM models for RVTool Genesis."""
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID

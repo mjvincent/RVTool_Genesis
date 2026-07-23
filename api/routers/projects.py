@@ -3,11 +3,11 @@ import uuid
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import PricingTemplate, Project, Upload
+from db.models import PricingTemplate, Project
 from schemas.project import ProjectCreate, ProjectListResponse, ProjectResponse, ProjectUpdate
 
 logger = logging.getLogger(__name__)
@@ -119,8 +119,6 @@ async def duplicate_project(
     No uploads or server records are copied — the user can re-upload if needed.
     The new project name is taken from the request body (field: ``name``).
     """
-    from pydantic import BaseModel
-
     source = await _get_project_or_404(db, project_id)
     new_name: str = (body.get("name") or f"{source.name} (copy)").strip()
 

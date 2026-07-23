@@ -28,7 +28,6 @@ from services.ai_normalizer import (
     _build_prompt,         # noqa: PLC2701  (private but stable)
     _extract_json,         # noqa: PLC2701
     _sanitize_numeric_fields,  # noqa: PLC2701
-    _is_powervs_os,        # noqa: PLC2701
 )
 
 logger = logging.getLogger(__name__)

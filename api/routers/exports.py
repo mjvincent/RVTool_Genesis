@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
-from db.models import Assumption, AssumptionsExport, Project, RVToolsExport, ServerRecord
+from db.models import Assumption, AssumptionsExport, RVToolsExport, ServerRecord
 from routers.projects import _get_project_or_404
 from services import assumptions_generator, powervs_calculator_generator, rvtools_generator, vpc_calculator_generator
 from services.rvtools_generator import generate_rvtools_pure_xlsx
