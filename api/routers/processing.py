@@ -4,15 +4,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import AsyncSessionLocal, get_db
-from db.models import Assumption, AuditLog, ServerRecord
+from db.models import Assumption, AuditLog, ProcessingJob, ServerRecord
 from routers.projects import _get_project_or_404
 from services import ai_normalizer
 
@@ -180,37 +181,71 @@ async def process_all_records(
 )
 async def start_processing(
     project_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> ProcessStartResponse:
-    """Trigger AI normalization for all pending records in a project."""
+    """Trigger AI normalization for all pending records in a project.
+
+    Creates a durable ProcessingJob row. If a job for this project is already
+    active (pending or in_progress), returns 'already_running' without creating
+    a duplicate.
+    """
     await _get_project_or_404(db, project_id)
 
-    result = await db.execute(
-        select(ServerRecord).where(
+    # Check for an existing active job for this project
+    existing = await db.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.project_id == project_id,
+            ProcessingJob.status.in_(["pending", "in_progress"]),
+        )
+    )
+    active_job = existing.scalar_one_or_none()
+    if active_job is not None:
+        # Count remaining pending records for the response message
+        count_result = await db.execute(
+            select(func.count(ServerRecord.id)).where(
+                ServerRecord.project_id == project_id,
+                ServerRecord.processing_status == "pending",
+            )
+        )
+        remaining = count_result.scalar_one() or 0
+        return ProcessStartResponse(
+            status="already_running",
+            record_count=remaining,
+            message="Processing is already running for this project",
+        )
+
+    # Count pending records
+    count_result = await db.execute(
+        select(func.count(ServerRecord.id)).where(
             ServerRecord.project_id == project_id,
             ServerRecord.processing_status == "pending",
         )
     )
-    pending_records = result.scalars().all()
+    pending_count = count_result.scalar_one() or 0
 
-    if not pending_records:
+    if pending_count == 0:
         return ProcessStartResponse(
             status="no_pending_records",
             record_count=0,
             message="No pending records found for this project",
         )
 
-    record_ids = [r.id for r in pending_records]
-
-    # Do NOT bulk pre-mark as processing — each record is marked individually
-    # when its turn comes, so the progress counter increments correctly.
-    background_tasks.add_task(process_all_records, project_id, record_ids)
+    # Create a durable job row — the worker loop will pick it up within _POLL_INTERVAL
+    job = ProcessingJob(
+        project_id=project_id,
+        status="pending",
+        total_records=pending_count,
+        processed_records=0,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(job)
+    await db.commit()
 
     return ProcessStartResponse(
         status="started",
-        record_count=len(record_ids),
-        message=f"Processing {len(record_ids)} records in background",
+        record_count=pending_count,
+        message=f"Processing {pending_count} records queued",
     )
 
 
@@ -420,6 +455,39 @@ async def process_single_record(
 
 
 @router.post(
+    "/projects/{project_id}/processing/cancel",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_processing(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Request cancellation of the active processing job for a project.
+
+    Sets cancel_requested=True on the active job row. The worker checks this
+    flag after each record and will stop cleanly.
+    """
+    await _get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.project_id == project_id,
+            ProcessingJob.status.in_(["pending", "in_progress"]),
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return {"cancelled": False, "message": "No active processing job found for this project"}
+
+    job.cancel_requested = True
+    job.updated_at = datetime.utcnow()
+    await db.commit()
+
+    return {"cancelled": True, "message": "Cancellation requested — worker will stop after the current record"}
+
+
+@router.post(
     "/projects/{project_id}/processing/reset-stuck",
     response_model=dict,
     status_code=status.HTTP_200_OK,
@@ -430,12 +498,12 @@ async def reset_stuck_records(
 ) -> Any:
     """Reset any records stuck in 'processing' state back to 'pending'.
 
-    A record can get stuck if the API container was restarted while a background
-    task was running, or if Ollama hung without raising an error.  Call this
-    endpoint followed by POST /process to resume.
+    Also resets any stuck/failed/cancelled job rows for this project so that
+    POST /process can create a fresh job.
     """
     await _get_project_or_404(db, project_id)
 
+    # Reset stuck server records
     result = await db.execute(
         select(ServerRecord).where(
             ServerRecord.project_id == project_id,
@@ -444,10 +512,20 @@ async def reset_stuck_records(
     )
     stuck = result.scalars().all()
     count = len(stuck)
-
     for record in stuck:
         record.processing_status = "pending"
         record.error_message = None
+
+    # Also reset any non-active job rows so a fresh job can be created
+    stale_jobs = await db.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.project_id == project_id,
+            ProcessingJob.status.in_(["in_progress", "failed", "cancelled"]),
+        )
+    )
+    for job in stale_jobs.scalars().all():
+        job.status = "done"  # archive it rather than delete
+        job.updated_at = datetime.utcnow()
 
     await db.commit()
     logger.info("Reset %d stuck records to pending for project %s", count, project_id)

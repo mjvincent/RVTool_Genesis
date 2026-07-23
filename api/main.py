@@ -4,13 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
 
 from core.auth import require_token
 from core.config import settings
-from db.database import AsyncSessionLocal
 from routers.health import router as health_router
 from routers import backups, exports, folders, pricing_template, processing, projects, settings as settings_router, uploads
+from services.job_worker import requeue_stale_jobs, run_worker_loop
 # schemas/pricing_template imported via the router; no top-level import needed
 
 logging.basicConfig(level=logging.INFO)
@@ -78,34 +77,20 @@ async def lifespan(app: FastAPI):
             "Generate one with: openssl rand -hex 32"
         )
 
-    # Reset any records stuck in 'processing' state from a previous container crash.
-    # Background tasks are process-local; if the API container restarts mid-processing,
-    # those records are left in 'processing' indefinitely without this guard.
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            text(
-                "UPDATE server_records SET processing_status = 'pending' "
-                "WHERE processing_status = 'processing'"
-            )
-        )
-        await db.commit()
-        reset_count = result.rowcount
-        if reset_count > 0:
-            logger.warning(
-                "Startup recovery: reset %d stuck record(s) from 'processing' → 'pending'. "
-                "These were mid-flight when the API was last stopped.",
-                reset_count,
-            )
-        else:
-            logger.info("Startup recovery: no stuck processing records found.")
+    # Re-queue any processing jobs that were in_progress when the API last stopped.
+    # The job worker uses a durable PostgreSQL-backed queue, so jobs survive restarts.
+    await requeue_stale_jobs()
 
     recommendation_task = asyncio.create_task(_recommendation_checker_loop())
+    worker_task = asyncio.create_task(run_worker_loop())
     yield
+    worker_task.cancel()
     recommendation_task.cancel()
-    try:
-        await recommendation_task
-    except asyncio.CancelledError:
-        pass
+    for task in (worker_task, recommendation_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("RVTool Genesis API shutting down.")
 
 

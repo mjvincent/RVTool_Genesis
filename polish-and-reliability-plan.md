@@ -19,7 +19,7 @@ requires no action.
 
 ### Sub-task 1 — Widen Ruff lint gate to full `api/` directory
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 **Intent**
 
@@ -54,7 +54,7 @@ codebase to a consistent lint baseline.
 
 ### Sub-task 2 — Add accessible label to the Exclude checkbox
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 **Intent**
 
@@ -91,7 +91,7 @@ correctly implemented.
 
 ### Sub-task 3 — Add upload decompression-ratio and row-count guards
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 **Intent**
 
@@ -147,7 +147,7 @@ CSV files do not have a ZIP container, so only the row-count guard applies to th
 
 ### Sub-task 4 — Replace BackgroundTasks with a PostgreSQL-backed job queue
 
-**Status:** `[ ] pending`
+**Status:** `[x] done`
 
 **Intent**
 

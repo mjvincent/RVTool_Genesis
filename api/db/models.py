@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -281,6 +281,45 @@ class PricingTemplate(Base):
 
     # relationships
     project: Mapped["Project"] = relationship(back_populates="pricing_template")
+
+
+class ProcessingJob(Base):
+    """Durable processing job — one active row per project at a time.
+
+    Replaces FastAPI BackgroundTasks so jobs survive API restarts and concurrent
+    POST /process calls are safely deduplicated.
+
+    Lifecycle:
+        pending  → in_progress  (worker claims the job)
+        in_progress → done      (all records processed)
+        in_progress → failed    (unrecoverable worker error)
+        any → cancelled         (user cancels via DELETE /process)
+
+    The (project_id, status) unique-partial index prevents two active jobs for
+    the same project — enforced at the DB level, not just in application code.
+    """
+    __tablename__ = "processing_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # pending / in_progress / done / failed / cancelled
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    total_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Whether this job was cancelled mid-run (worker checks this flag each loop)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=_utcnow, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_processing_jobs_project_status", "project_id", "status"),
+    )
 
 
 class AuditLog(Base):
