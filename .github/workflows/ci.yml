@@ -53,6 +53,33 @@ jobs:
       - name: Run Ruff
         run: ruff check api/
 
+  # ── Alembic migration chain ────────────────────────────────────────────────
+  check-migrations:
+    name: Alembic single-head check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Alembic
+        run: pip install alembic sqlalchemy asyncpg
+      - name: Assert single migration head
+        working-directory: api
+        run: |
+          HEAD_COUNT=$(alembic heads 2>&1 | grep -c '(head)')
+          echo "Migration heads found: $HEAD_COUNT"
+          if [ "$HEAD_COUNT" -ne 1 ]; then
+            echo "ERROR: Expected exactly 1 Alembic head, found $HEAD_COUNT."
+            echo "Run 'alembic merge heads' locally to resolve before merging."
+            alembic heads
+            exit 1
+          fi
+        env:
+          # Dummy DB URL — alembic heads only reads migration files, no live DB needed
+          DATABASE_URL: "postgresql+asyncpg://dummy:dummy@localhost/dummy"
+          SECRET_KEY: "ci-test-secret-key-not-used-for-encryption-00000000"
+
   # ── Python tests ───────────────────────────────────────────────────────────
   test-python:
     name: Python unit tests
