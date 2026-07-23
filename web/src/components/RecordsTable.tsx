@@ -363,6 +363,7 @@ export default function RecordsTable({ projectId, onViewAssumptions, filterPrese
                                     id={`exclude-${row.id}`}
                                     labelText=""
                                     hideLabel
+                                    aria-label={`Exclude ${row.cells.find((c: any) => c.info.header === 'vm_name')?.value ?? 'this server'} from exports`}
                                     checked={isExcluded}
                                     onChange={(_: any, { checked }: { checked: boolean }) => {
                                       handleExclude(row.id, checked, checked ? (currentReason || null) : null);
