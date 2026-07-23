@@ -382,6 +382,7 @@ docker compose exec db psql -U rvtool -d rvtooldb
 | `assumptions_exports` | Generated Assumptions Report .xlsx blobs |
 | `pricing_templates` | Stored IBM Price Estimator .xlsx per project |
 | `llm_settings` | Single-row table: active provider, encrypted API keys, model names |
+| `audit_log` | Append-only event log: project, action, target record, actor, timestamp, detail JSON |
 
 ### Checking database size
 

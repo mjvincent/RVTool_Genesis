@@ -127,8 +127,19 @@ This is useful for keeping multiple engagements per customer tidy.
 
 1. Open a project and click **Upload**
 2. Drag a file onto the drop zone or click **Browse files**
-3. The parser runs immediately and shows the detected row count
-4. Click **Next → Normalize** once the upload completes
+3. The parser runs and a **mapping confirmation preview** appears
+
+### Mapping confirmation — verify column detection
+
+After the file is parsed, a preview panel shows the **detected column names**
+and **5 sample rows** from the source file before normalization begins. This
+lets you verify that VM name, CPU, RAM, OS, disk, and cluster columns were
+correctly detected.
+
+| Action | Effect |
+|---|---|
+| **Looks good — proceed to normalize** | Continues to the Normalize page |
+| **Re-upload different file** | Clears state so you can choose a different file |
 
 > You can upload a replacement file at any time. The previous records and
 > assumptions for the project are cleared and replaced with the new upload.
@@ -181,6 +192,22 @@ resume from where normalization stopped.
 
 The Review page shows all normalized records in a sortable table. This is where
 you inspect AI decisions, fix any problems, and prepare the data for export.
+
+### Filter presets — focus on problems first
+
+Four preset filter buttons sit above the records table. The page defaults to
+**Needs attention** so problems surface immediately without manual filtering.
+
+| Preset | What it shows | Default? |
+|---|---|---|
+| **Needs attention** | Error records first, then low-confidence AI results, then records missing key fields (CPU/RAM/OS) | ✅ Yes |
+| **Errors** | Only `processing_status = error` records | — |
+| **Excluded** | Only excluded records | — |
+| **All** | Every record (all statuses, all types) | — |
+
+Each button shows a count badge (e.g. "Needs attention (4)"). If zero records
+need attention on load, the page silently shows **All** records with a green
+"✓ All records look good" notification.
 
 ### Reading the table
 
@@ -308,9 +335,33 @@ The Export page generates all output files. The page is divided into two section
 **x86 / VPC Workloads** and **PowerVS Workloads** — each section only appears if
 the project contains that type of record.
 
+### Migration Readiness Summary
+
+At the top of the Export page, a colour-coded **Migration Readiness Summary**
+banner shows the complete project health before any export is attempted.
+
+| Stat tile | Shows |
+|---|---|
+| **Total servers** | All records (any status) |
+| **x86 ready** | Complete, non-excluded x86/VPC records — export-ready |
+| **PowerVS ready** | Complete, non-excluded PowerVS records — export-ready |
+| **Pending** | Records not yet normalized |
+| **Errors** | Records that failed normalization |
+| **Excluded** | Records manually excluded from exports |
+
+The banner header line gives a single clear decision:
+
+| Colour | Message | Meaning |
+|---|---|---|
+| 🟢 Green | ✓ Ready to export | At least one x86 record complete, zero errors |
+| 🔴 Red | ✗ N records need attention | Error records exist — review before exporting |
+| 🟡 Amber | ⏳ Processing not yet started | No normalization run yet |
+| 🟡 Amber | ⚠ No complete x86 records | Processing done but no results ready |
+
 ### Setting the target datacenter
 
-Before exporting, confirm the target regions shown in the two banner rows:
+Before exporting, confirm the target regions shown in the two banner rows below
+the Readiness Summary:
 
 - **IBM Cloud Target** — the VPC region and availability zone used in the Cloud
   Solution Export (e.g. `us-south` / `us-south-1`)

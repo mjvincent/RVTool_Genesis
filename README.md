@@ -181,6 +181,8 @@ OrbStack / Docker Compose
 │   ├── /api/uploads           — file upload + raw parse + record edit
 │   │                            bulk-os-replace, bulk-nxf-replace, nxf-count
 │   ├── /api/process           — AI normalization (background tasks)
+│   ├── /api/process/{id}/readiness-summary  — Migration Readiness Summary stats
+│   ├── /api/process/{id}/audit-log          — append-only project event log
 │   ├── /api/export            — 7 RVTools + Assumptions export endpoints
 │   ├── /api/projects/{id}/pricing-template  — IBM Price Estimator upload + populate
 │   ├── /api/settings          — LLM provider settings + model recommendations
