@@ -415,6 +415,8 @@ export const api = {
       apiFetch(`${BASE}/projects/${projectId}/records/${recordId}/process`, { method: 'POST' }),
     resetStuck: (projectId: string): Promise<{ reset_count: number; message: string }> =>
       apiFetch(`${BASE}/projects/${projectId}/processing/reset-stuck`, { method: 'POST' }),
+    cancel: (projectId: string): Promise<{ cancelled: boolean; message: string }> =>
+      apiFetch(`${BASE}/projects/${projectId}/processing/cancel`, { method: 'POST' }),
   },
   exports: {
     // RVTools Export — 22-sheet full RVTools format (VCF Migration Lite)

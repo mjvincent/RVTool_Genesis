@@ -129,9 +129,15 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    Promise.all([
-      api.settings.get(),
-      api.settings.getRecommendation(),
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), 4000)
+    );
+    Promise.race([
+      Promise.all([
+        api.settings.get(),
+        api.settings.getRecommendation(),
+      ]),
+      timeout,
     ]).then(([s, rec]) => {
       applySettingsToState(s);
       setRecommendation(rec.recommendation);
@@ -158,7 +164,7 @@ export default function SettingsPage() {
         if (second) setBenchmarkModelB(second.name);
       }
     } catch {
-      setAdvisorError('Could not reach the advisor endpoint.');
+      setAdvisorError('Could not reach Ollama — make sure it is running locally.');
     } finally {
       setAdvisorLoading(false);
     }

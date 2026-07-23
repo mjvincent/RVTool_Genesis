@@ -1,4 +1,4 @@
-import { Button } from '@carbon/react';
+import { Button, InlineNotification } from '@carbon/react';
 import { ChevronRight, Renew } from '@carbon/icons-react';
 
 interface MappingPreviewProps {
@@ -20,6 +20,51 @@ export default function MappingPreview({
 }: MappingPreviewProps) {
   const displayCols = columns.slice(0, 12); // cap display at 12 cols to avoid overflow
   const hidden = columns.length - displayCols.length;
+
+  // No records detected at all — likely wrong file or empty sheet
+  if (rowCount === 0) {
+    return (
+      <div style={{ marginTop: '1rem' }}>
+        <InlineNotification
+          kind="warning"
+          title="No records detected"
+          subtitle="The file was parsed but no data rows were found. Check that the file contains a header row and data, then try re-uploading."
+          lowContrast
+          style={{ marginBottom: '1rem' }}
+        />
+        <Button kind="ghost" renderIcon={Renew} onClick={onReupload}>
+          Re-upload different file
+        </Button>
+      </div>
+    );
+  }
+
+  // Rows detected but no sample data available (edge case — all rows cleaned away)
+  if (sampleRows.length === 0) {
+    return (
+      <div style={{ marginTop: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#161616' }}>{fileName}</span>
+          <span style={{ fontSize: '0.8125rem', color: '#525252' }}>{rowCount} server record{rowCount !== 1 ? 's' : ''} detected</span>
+        </div>
+        <InlineNotification
+          kind="info"
+          title="Preview unavailable"
+          subtitle="Records were detected but no sample data could be shown. You can still proceed to normalize."
+          lowContrast
+          style={{ marginBottom: '1rem' }}
+        />
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <Button renderIcon={ChevronRight} onClick={onConfirm}>
+            Looks good — proceed to normalize
+          </Button>
+          <Button kind="ghost" renderIcon={Renew} onClick={onReupload}>
+            Re-upload different file
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginTop: '1rem' }}>

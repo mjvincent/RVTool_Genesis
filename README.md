@@ -543,6 +543,13 @@ provider fails.
 
 > Full history with linked diffs: [CHANGELOG.md](CHANGELOG.md)
 
+### v2.3.1
+
+- **Settings page timeout** — No longer hangs if Ollama is unreachable; renders within 4 seconds with a clear error message.
+- **Cancel normalization** — New Cancel button on the Normalize page; wires up the v2.3.0 backend cancel endpoint.
+- **MappingPreview empty states** — Clear warning/info notices when a file has no records or no sample data, instead of a blank table.
+- **ProjectsPage status failures** — Failed per-project status fetches now show "—" instead of nothing.
+
 ### v2.3.0
 
 - **Durable job queue** — Processing now uses a PostgreSQL-backed `processing_jobs` table. Jobs survive API restarts; concurrent start requests are safely deduplicated; a new Cancel endpoint stops processing after the current record.

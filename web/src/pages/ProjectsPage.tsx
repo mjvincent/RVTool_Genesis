@@ -35,7 +35,7 @@ export default function ProjectsPage() {
   const [projects, setProjects]             = useState<Project[]>([]);
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState('');
-  const [statusMap, setStatusMap]           = useState<Record<string, { complete: number; total: number; is_complete: boolean }>>({});
+  const [statusMap, setStatusMap]           = useState<Record<string, { complete: number; total: number; is_complete: boolean; unavailable?: boolean }>>({});
 
   // Delete project
   const [deleteTarget, setDeleteTarget]     = useState<Project | null>(null);
@@ -86,11 +86,13 @@ export default function ProjectsPage() {
       const statuses = await Promise.allSettled(
         projectRes.projects.map(p => api.processing.getStatus(p.id))
       );
-      const map: Record<string, { complete: number; total: number; is_complete: boolean }> = {};
+      const map: Record<string, { complete: number; total: number; is_complete: boolean; unavailable?: boolean }> = {};
       projectRes.projects.forEach((p, i) => {
         const r = statuses[i];
         if (r.status === 'fulfilled' && r.value.total > 0) {
           map[p.id] = { complete: r.value.complete, total: r.value.total, is_complete: r.value.is_complete };
+        } else if (r.status === 'rejected') {
+          map[p.id] = { complete: 0, total: 0, is_complete: false, unavailable: true };
         }
       });
       setStatusMap(map);
@@ -441,7 +443,9 @@ export default function ProjectsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <p className="project-item-name" style={{ margin: 0 }}>{project.name}</p>
                     {statusMap[project.id] && (
-                      statusMap[project.id].is_complete ? (
+                      statusMap[project.id].unavailable ? (
+                        <span title="Status unavailable" style={{ fontSize: '0.75rem', color: '#6f6f6f', padding: '0 0.25rem', lineHeight: '1.6' }}>—</span>
+                      ) : statusMap[project.id].is_complete ? (
                         <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#198038', background: '#defbe6', border: '1px solid #a7f0ba', borderRadius: 10, padding: '0 0.5rem', lineHeight: '1.6' }}>
                           ✓ Complete
                         </span>

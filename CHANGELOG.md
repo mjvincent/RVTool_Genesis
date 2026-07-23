@@ -11,6 +11,42 @@ Versions are tagged on `main`; each section maps to one or more git commits.
 
 ---
 
+## [2.3.1] — 2026-07-23
+
+### Fixed
+
+- **Settings page no longer hangs when Ollama is unreachable** — The mount
+  `Promise.all` is now wrapped in a 4-second `Promise.race` timeout. If Ollama
+  or the recommendation endpoint is slow or down, the page renders within 4
+  seconds and the Ollama advisor section shows a clear "Could not reach Ollama"
+  message instead of an indefinite spinner.
+  (`web/src/pages/SettingsPage.tsx`)
+
+- **Cancel normalization button** — A "Cancel normalization" button is now
+  visible on the Normalize page while a job is running. Clicking it calls the
+  backend cancel endpoint, stops the polling loop, and shows a confirmation
+  notification. The worker finishes the current record and then stops.
+  (`web/src/api/client.ts` — added `cancel()`; `web/src/pages/NormalizePage.tsx`)
+
+- **`already_running` response handled on NormalizePage** — If a second "Start"
+  click is made while a job is already running, the page silently attaches to
+  the existing job via polling instead of showing confusing duplicate feedback.
+  (`web/src/pages/NormalizePage.tsx`)
+
+- **MappingPreview empty/error states** — Upload preview now shows a clear
+  warning when no records are detected (wrong file or empty sheet) and an info
+  notice when rows were detected but no sample data could be generated, rather
+  than a blank table.
+  (`web/src/components/MappingPreview.tsx`)
+
+- **ProjectsPage silent status failures surfaced** — When a per-project status
+  fetch fails, the project card now shows a subtle "—" indicator with a tooltip
+  ("Status unavailable") instead of showing nothing, so coworkers don't mistake
+  a network hiccup for an unnormalized project.
+  (`web/src/pages/ProjectsPage.tsx`)
+
+---
+
 ## [2.3.0] — 2026-07-21
 
 ### Added

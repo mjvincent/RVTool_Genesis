@@ -4,7 +4,7 @@ import {
   Button, InlineNotification, ProgressBar,
   Breadcrumb, BreadcrumbItem, Loading,
 } from '@carbon/react';
-import { Checkmark, ChevronRight, Reset } from '@carbon/icons-react';
+import { Checkmark, ChevronRight, Reset, Stop } from '@carbon/icons-react';
 import { api, Project, ProcessingStatus } from '../api/client';
 import StepProgress from '../components/StepProgress';
 
@@ -20,6 +20,7 @@ export default function NormalizePage() {
   const [processing, setProcessing]   = useState(false);
   const [processError, setProcessError] = useState('');
   const [resetMsg, setResetMsg]       = useState('');
+  const [cancelMsg, setCancelMsg]     = useState('');
 
   // Per-record heartbeat: seconds elapsed since last status change
   const [heartbeat, setHeartbeat]     = useState(0);
@@ -132,16 +133,37 @@ export default function NormalizePage() {
   async function handleProcess() {
     setProcessing(true);
     setProcessError('');
+    setCancelMsg('');
     lastCompleteRef.current = status?.complete ?? 0;
     setHeartbeat(0);
     try {
-      await api.processing.start(projectId);
+      const resp = await api.processing.start(projectId);
+      if (resp.status === 'already_running') {
+        setProcessError('');
+        // Job already in progress — just attach to it via polling
+        startPolling();
+        startHeartbeat();
+        return;
+      }
       startPolling();
       startHeartbeat();
     } catch (err) {
       setProcessError(`Could not start normalization: ${(err as any)?.detail || (err as any)?.message || 'Please try again.'}`);
       setProcessing(false);
     }
+  }
+
+  async function handleCancel() {
+    try {
+      await api.processing.cancel(projectId);
+    } catch {
+      // best-effort — even if the request fails, stop polling locally
+    }
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+    setProcessing(false);
+    setHeartbeat(0);
+    setCancelMsg('Cancellation requested — the current record will finish, then normalization will stop.');
   }
 
   async function handleResetStuck() {
@@ -242,6 +264,17 @@ export default function NormalizePage() {
           />
         )}
 
+        {cancelMsg && (
+          <InlineNotification
+            kind="info"
+            title={cancelMsg}
+            subtitle=""
+            lowContrast
+            style={{ marginBottom: '1rem' }}
+            onCloseButtonClick={() => setCancelMsg('')}
+          />
+        )}
+
         <div className="ibm-card">
           {isComplete ? (
             <>
@@ -312,6 +345,18 @@ export default function NormalizePage() {
                   </span>
                 </div>
               )}
+
+              {/* Cancel button — always visible while in progress */}
+              <div style={{ marginTop: '1rem' }}>
+                <Button
+                  kind="danger--ghost"
+                  size="sm"
+                  renderIcon={Stop}
+                  onClick={handleCancel}
+                >
+                  Cancel normalization
+                </Button>
+              </div>
 
               <p style={{ marginTop: '0.75rem', fontSize: '0.8125rem', color: '#6f6f6f' }}>
                 Each record takes ~6–15 s depending on model speed. Average per batch: ~{Math.round((status?.total ?? recordCount ?? 0) * 10 / 60)} minutes total.
